@@ -31,7 +31,9 @@ Durante o scan, ele imprime o progresso a cada 500 mensagens verificadas dentro 
 
 Os dados ficam em data/reacoes.db (SQLite puro - abre com qualquer client SQL, DB Browser for SQLite, ou "sqlite3 data/reacoes.db" no terminal). Consultas prontas em queries.sql.
 
-## Dashboard web local
+## Dashboard web local (descontinuado, veja o painel nativo abaixo)
+
+Essa abordagem (servidor Python local + pagina separada) foi testada e descartada - os links abertos davam erro e o fluxo de depender de um servidor rodando nao era pratico. Ficou aqui so por referencia; o caminho atual e o "Painel nativo dentro do Telegram Web" mais abaixo.
 
     python dashboard.py
 
@@ -39,24 +41,23 @@ Sobe um servidor local (so acessivel no seu computador) e abre sozinho no navega
 
 Os links de grupos/canais publicos abrem como pagina web (sem precisar do app do Telegram instalado). Grupos/canais privados (sem @username publico) nao tem essa opcao - o link deles so abre se voce tiver o Telegram Desktop instalado ou estiver logado em web.telegram.org no navegador.
 
-## Painel dentro do Telegram Web (recomendado)
+## Painel nativo dentro do Telegram Web (versao atual)
 
-Em vez de uma pagina separada, da pra ter o painel de Top Reacoes direto dentro do web.telegram.org, igual a primeira versao - mas agora puxando os dados completos que o scan.py ja coletou. Clicar numa mensagem navega direto dentro da propria sessao do Telegram (sem link quebrado, sem depender de app nenhum).
+O painel roda inteiro dentro do proprio web.telegram.org - sem servidor local, sem Python rodando, sem conexao de IP pra manter aberta. O cliente do Telegram (MTProto) foi portado pra JavaScript puro e roda direto no navegador, do mesmo jeito que o proprio Telegram Web se conecta (WebSocket), e a sessao de login fica guardada no proprio Tampermonkey.
+
+Isso ainda e so a parte de login (fase 1). A tela de top reacoes dentro do painel (puxando os dados que o scan.py ja coleta) e a proxima etapa.
 
 Setup (uma vez so):
 
 1. Instale a extensao Tampermonkey no seu navegador (https://www.tampermonkey.net).
-2. Abra o arquivo painel_telegram.user.js (ex: `notepad painel_telegram.user.js`), copie todo o conteudo.
-3. No Tampermonkey, clique em "Criar novo script", apague o conteudo padrao, cole o do arquivo, salve (Ctrl+S).
-4. Da primeira vez que o painel tentar buscar dados, o Tampermonkey vai pedir permissao pra acessar 127.0.0.1 - autorize.
+2. Abra o arquivo painel_telegram.user.js (ele e grande, mais de 8 MB, porque leva embutido o cliente inteiro do Telegram - isso e esperado, nao precisa editar nada nele).
+3. No Tampermonkey, clique em "Criar novo script", apague o conteudo padrao, cole todo o conteudo do arquivo, salve (Ctrl+S).
+4. Abra ou atualize o web.telegram.org - aparece um botao flutuante "Top Reacoes" no canto da tela.
+5. Clique nele. Na primeira vez, vai pedir api_id e api_hash (pegue em https://my.telegram.org/apps, so precisa fazer isso uma vez - fica salvo no proprio navegador).
+6. Depois disso, pede seu numero de telefone, o codigo de login (chega no proprio Telegram ou por SMS) e, se voce tiver verificacao em duas etapas, a senha - tudo em caixas de texto dentro do proprio painel.
+7. Uma vez logado, a sessao fica salva no Tampermonkey - reabrir o painel depois nao pede login de novo. Tem um botao "Sair" pra apagar a sessao salva, se precisar trocar de conta.
 
-Uso do dia a dia:
-
-1. Deixe `python dashboard.py` rodando num terminal (ele so precisa estar de pe, nao precisa abrir o navegador nele).
-2. Abra ou atualize o web.telegram.org - aparece um botao flutuante "Top Reacoes" no canto da tela.
-3. Clique nele pra abrir o painel, filtre por grupo/minimo de reacoes, e clique numa mensagem pra ir direto nela dentro do proprio Telegram.
-
-Essa e a versao mais nova - ainda nao testamos ao vivo, entao pode precisar de um ajuste fino na navegacao (o formato exato do link interno pode variar entre as versoes do Telegram Web). Testa e me fala o que aparecer.
+Detalhe tecnico, caso de erro: o arquivo painel_telegram.user.js e gerado (nao e pra editar na mao) a partir dos arquivos em painel_build/ (entry.js, painel_logic.js, build.mjs). Pra gerar de novo depois de alguma mudanca: `cd painel_build && npm install && npm run build`.
 
 ## Escolher quais grupos/canais entram no scan
 
