@@ -602,27 +602,25 @@
             lista.innerHTML = "";
             for (const m of mensagens) {
                 const item = document.createElement("div");
-                item.style.cssText = "padding:8px 0;border-bottom:1px solid #2a2f3a;cursor:pointer;";
+                item.style.cssText = "padding:8px 0;border-bottom:1px solid #2a2f3a;";
                 item.innerHTML =
-                    '<div style="color:#4da3ff;font-weight:600;">' +
+                    '<div style="color:#4da3ff;font-weight:600;cursor:pointer;" class="trp-abrir">' +
                     m.reactionTotal +
                     " reacoes - " +
                     escapeHtml(m.dateUtc.slice(0, 10)) +
                     "</div>" +
                     '<div style="color:#8b92a3;font-size:11px;">' +
                     escapeHtml(m.chatTitle) +
+                    " - id: " +
+                    escapeHtml(m.chatId) +
                     "</div>" +
                     "<div>" +
                     escapeHtml(m.textPreview) +
                     "</div>";
-                item.addEventListener("click", () => {
-                    // So' trocar window.location.hash nao funciona: o
-                    // Telegram Web parece ler o hash da URL apenas no
-                    // carregamento inicial da pagina, nao durante o uso (foi
-                    // isso que deixava a area do chat em branco). Abrindo
-                    // numa aba nova, o hash ja chega junto com o carregamento
-                    // - igual quando voce testou digitando a URL direto.
-                    window.open("https://web.telegram.org/k/#" + m.chatId, "_blank");
+                item.querySelector(".trp-abrir").addEventListener("click", () => {
+                    const url = "https://web.telegram.org/k/#" + m.chatId;
+                    console.log("[Top Reacoes] abrindo:", url);
+                    window.open(url, "_blank");
                 });
                 lista.appendChild(item);
             }
