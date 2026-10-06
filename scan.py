@@ -8,15 +8,19 @@ ele em "ignorar" (por @username ou pelo identificador numerico que aparece
 no list_chats.py).
 
 Uso:
-    python scan.py                 escaneia tudo (exceto o que estiver em "ignorar")
-    python scan.py --top 20        escaneia e depois mostra as 20 com mais reacoes
-    python scan.py --top-only 20   so mostra o top, sem escanear de novo
+    python scan.py                                   escaneia tudo (exceto o que estiver em "ignorar")
+    python scan.py --top 20                          escaneia e depois mostra as 20 com mais reacoes
+    python scan.py --top-only 20                      so mostra o top, sem escanear de novo
+    python scan.py --limite-por-chat 1000 --top 20    escaneia no maximo 1000 mensagens novas por grupo nesta
+                                                       rodada (rapido pra um primeiro teste; continua de onde
+                                                       parou na proxima execucao, sem perder progresso)
 """
 
 import argparse
 import asyncio
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -85,7 +89,7 @@ def is_ignored(dialog, ignore_set):
     return str(dialog.id) in ignore_set
 
 
-async def scan_chat(client, conn, entity):
+async def scan_chat(client, conn, entity, limite=None):
     chat_id = entity.id
     chat_title = getattr(entity, "title", None) or getattr(entity, "first_name", None) or str(chat_id)
     chat_username = getattr(entity, "username", None)
@@ -94,26 +98,35 @@ async def scan_chat(client, conn, entity):
     max_id_seen = last_id
     new_with_reactions = 0
     total_seen = 0
+    inicio = time.monotonic()
+
+    print(f"[{chat_title}] iniciando a partir da mensagem {last_id}...")
 
     async for message in client.iter_messages(entity, min_id=last_id, reverse=True):
         total_seen += 1
         max_id_seen = max(max_id_seen, message.id)
 
         reactions, total = extract_reactions(message)
-        if total <= 0:
-            continue
+        if total > 0:
+            db.upsert_message(
+                conn,
+                chat_id=chat_id,
+                message_id=message.id,
+                date_utc=message.date.astimezone(timezone.utc).isoformat(),
+                text_preview=preview_text(message),
+                reaction_total=total,
+                reactions=reactions,
+                link=build_link(entity, message.id),
+            )
+            new_with_reactions += 1
 
-        db.upsert_message(
-            conn,
-            chat_id=chat_id,
-            message_id=message.id,
-            date_utc=message.date.astimezone(timezone.utc).isoformat(),
-            text_preview=preview_text(message),
-            reaction_total=total,
-            reactions=reactions,
-            link=build_link(entity, message.id),
-        )
-        new_with_reactions += 1
+        if total_seen % 500 == 0:
+            decorridos = time.monotonic() - inicio
+            print(f"  [{chat_title}] {total_seen} mensagens verificadas ({decorridos:.0f}s)...")
+
+        if limite is not None and total_seen >= limite:
+            print(f"  [{chat_title}] limite de {limite} mensagens atingido nesta rodada, continua na proxima execucao.")
+            break
 
     db.upsert_chat(
         conn,
@@ -125,10 +138,11 @@ async def scan_chat(client, conn, entity):
     )
     conn.commit()
 
-    print(f"[{chat_title}] {total_seen} mensagens novas analisadas, {new_with_reactions} com reacoes salvas.")
+    decorridos = time.monotonic() - inicio
+    print(f"[{chat_title}] {total_seen} mensagens novas analisadas, {new_with_reactions} com reacoes salvas ({decorridos:.0f}s).")
 
 
-async def run_scan(conn):
+async def run_scan(conn, limite_por_chat=None):
     ignore_set = load_ignore_set()
     client = TelegramClient(str(SESSION_PATH), API_ID, API_HASH)
     await client.start(
@@ -142,7 +156,7 @@ async def run_scan(conn):
             if is_ignored(dialog, ignore_set):
                 print(f"[{dialog.name}] ignorado (esta na lista de exclusao).")
                 continue
-            await scan_chat(client, conn, dialog.entity)
+            await scan_chat(client, conn, dialog.entity, limite=limite_por_chat)
     finally:
         await client.disconnect()
 
@@ -167,6 +181,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--top", type=int, default=None, help="Escaneia e mostra o top N depois")
     parser.add_argument("--top-only", type=int, default=None, help="So mostra o top N, sem escanear")
+    parser.add_argument(
+        "--limite-por-chat",
+        type=int,
+        default=None,
+        help="Limita quantas mensagens novas processa por grupo/canal nesta rodada (continua de onde parou na proxima). Bom para um primeiro teste rapido.",
+    )
     args = parser.parse_args()
 
     conn = db.connect(str(DB_PATH))
@@ -175,7 +195,7 @@ def main():
         show_top(conn, args.top_only)
         return
 
-    asyncio.run(run_scan(conn))
+    asyncio.run(run_scan(conn, limite_por_chat=args.limite_por_chat))
 
     if args.top is not None:
         show_top(conn, args.top)

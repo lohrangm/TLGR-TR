@@ -19,10 +19,13 @@ Escaneia grupos e canais do Telegram via API oficial (Telethon/MTProto) e guarda
 
 ## Uso do dia a dia
 
-- python scan.py                 escaneia tudo que for novo, em todos os grupos/canais, desde o ultimo scan
-- python scan.py --top 20        escaneia e ja mostra as 20 mensagens com mais reacoes no final
-- python scan.py --top-only 20   so mostra o top 20 que ja esta salvo, sem escanear de novo
-- python list_chats.py           lista seus grupos/canais e mostra quais serao escaneados ou ignorados
+- python scan.py                                 escaneia tudo que for novo, em todos os grupos/canais, desde o ultimo scan
+- python scan.py --top 20                        escaneia e ja mostra as 20 mensagens com mais reacoes no final
+- python scan.py --top-only 20                   so mostra o top 20 que ja esta salvo, sem escanear de novo
+- python scan.py --limite-por-chat 1000 --top 20 escaneia no maximo 1000 mensagens novas por grupo nessa rodada (rapido pra testar); retoma de onde parou na proxima execucao
+- python list_chats.py                           lista seus grupos/canais e mostra quais serao escaneados ou ignorados
+
+Durante o scan, ele imprime o progresso a cada 500 mensagens verificadas dentro de cada grupo/canal, entao mesmo num grupo grande da pra ver que esta avançando (nao fica mudo até terminar).
 
 Os dados ficam em data/reacoes.db (SQLite puro - abre com qualquer client SQL, DB Browser for SQLite, ou "sqlite3 data/reacoes.db" no terminal). Consultas prontas em queries.sql.
 
