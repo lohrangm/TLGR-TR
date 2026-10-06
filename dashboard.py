@@ -64,7 +64,8 @@ def link_para_preview(link):
 
 def buscar_top(conn, minimo, chat_id, limite):
     sql = """
-        SELECT m.date_utc, m.reaction_total, COALESCE(c.chat_title, CAST(m.chat_id AS TEXT)) AS chat_title,
+        SELECT m.chat_id, m.message_id, m.date_utc, m.reaction_total,
+               COALESCE(c.chat_title, CAST(m.chat_id AS TEXT)) AS chat_title,
                m.text_preview, m.link
         FROM messages m
         LEFT JOIN chats c ON c.chat_id = m.chat_id
@@ -80,6 +81,8 @@ def buscar_top(conn, minimo, chat_id, limite):
     rows = conn.execute(sql, params).fetchall()
     return [
         {
+            "chat_id": r["chat_id"],
+            "message_id": r["message_id"],
             "data": r["date_utc"][:10],
             "reacoes": r["reaction_total"],
             "grupo": r["chat_title"],

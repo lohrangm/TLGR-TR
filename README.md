@@ -39,6 +39,25 @@ Sobe um servidor local (so acessivel no seu computador) e abre sozinho no navega
 
 Os links de grupos/canais publicos abrem como pagina web (sem precisar do app do Telegram instalado). Grupos/canais privados (sem @username publico) nao tem essa opcao - o link deles so abre se voce tiver o Telegram Desktop instalado ou estiver logado em web.telegram.org no navegador.
 
+## Painel dentro do Telegram Web (recomendado)
+
+Em vez de uma pagina separada, da pra ter o painel de Top Reacoes direto dentro do web.telegram.org, igual a primeira versao - mas agora puxando os dados completos que o scan.py ja coletou. Clicar numa mensagem navega direto dentro da propria sessao do Telegram (sem link quebrado, sem depender de app nenhum).
+
+Setup (uma vez so):
+
+1. Instale a extensao Tampermonkey no seu navegador (https://www.tampermonkey.net).
+2. Abra o arquivo painel_telegram.user.js (ex: `notepad painel_telegram.user.js`), copie todo o conteudo.
+3. No Tampermonkey, clique em "Criar novo script", apague o conteudo padrao, cole o do arquivo, salve (Ctrl+S).
+4. Da primeira vez que o painel tentar buscar dados, o Tampermonkey vai pedir permissao pra acessar 127.0.0.1 - autorize.
+
+Uso do dia a dia:
+
+1. Deixe `python dashboard.py` rodando num terminal (ele so precisa estar de pe, nao precisa abrir o navegador nele).
+2. Abra ou atualize o web.telegram.org - aparece um botao flutuante "Top Reacoes" no canto da tela.
+3. Clique nele pra abrir o painel, filtre por grupo/minimo de reacoes, e clique numa mensagem pra ir direto nela dentro do proprio Telegram.
+
+Essa e a versao mais nova - ainda nao testamos ao vivo, entao pode precisar de um ajuste fino na navegacao (o formato exato do link interno pode variar entre as versoes do Telegram Web). Testa e me fala o que aparecer.
+
 ## Escolher quais grupos/canais entram no scan
 
 O `list_chats.py` cria (na primeira vez) o arquivo grupos_para_escanear.txt, com uma linha por grupo/canal, no formato:
