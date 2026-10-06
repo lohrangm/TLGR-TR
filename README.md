@@ -31,6 +31,12 @@ Durante o scan, ele imprime o progresso a cada 500 mensagens verificadas dentro 
 
 Os dados ficam em data/reacoes.db (SQLite puro - abre com qualquer client SQL, DB Browser for SQLite, ou "sqlite3 data/reacoes.db" no terminal). Consultas prontas em queries.sql.
 
+## Dashboard web local
+
+    python dashboard.py
+
+Sobe um servidor local (so acessivel no seu computador) e abre sozinho no navegador em http://127.0.0.1:8765. Mostra a tabela de top reacoes com filtro por grupo e por minimo de reacoes, e cada linha tem um link que abre a mensagem direto no Telegram. Le direto do banco, entao sempre mostra o que ja foi escaneado ate o momento - roda o scan.py de novo quando quiser dado mais recente, e so atualizar a pagina (F5) no navegador. Pra parar o servidor, Ctrl+C no terminal.
+
 ## Escolher quais grupos/canais entram no scan
 
 O `list_chats.py` cria (na primeira vez) o arquivo grupos_para_escanear.txt, com uma linha por grupo/canal, no formato:

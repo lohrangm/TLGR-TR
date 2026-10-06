@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telegram Top Reacoes</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #8b92a3;
+    --accent: #4da3ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitulo { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .filtros {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    margin-bottom: 20px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 16px;
+    border-radius: 8px;
+  }
+  .campo { display: flex; flex-direction: column; gap: 4px; }
+  label { font-size: 12px; color: var(--muted); }
+  select, input {
+    background: #0c0e12;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 14px;
+    min-width: 160px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  td.reacoes { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--accent); white-space: nowrap; }
+  td.data { white-space: nowrap; color: var(--muted); }
+  a.link { color: var(--accent); text-decoration: none; }
+  a.link:hover { text-decoration: underline; }
+  .vazio { color: var(--muted); padding: 24px; text-align: center; }
+  .periodo { color: var(--muted); font-size: 12px; margin-top: 16px; }
+  .mensagem { max-width: 480px; }
+</style>
+</head>
+<body>
+  <h1>Telegram Top Reacoes</h1>
+  <div class="subtitulo">Mensagens com mais reacoes, lidas direto do banco local.</div>
+
+  <div class="filtros">
+    <div class="campo">
+      <label for="grupo">Grupo</label>
+      <select id="grupo"><option value="">Todos</option></select>
+    </div>
+    <div class="campo">
+      <label for="minimo">Minimo de reacoes</label>
+      <input id="minimo" type="number" min="1" value="1">
+    </div>
+    <div class="campo">
+      <label for="limite">Quantidade</label>
+      <input id="limite" type="number" min="1" value="50">
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="data">Data</th>
+        <th>Reacoes</th>
+        <th>Grupo</th>
+        <th class="mensagem">Mensagem</th>
+        <th>Link</th>
+      </tr>
+    </thead>
+    <tbody id="corpo"></tbody>
+  </table>
+  <div id="vazio" class="vazio" style="display:none;">Nenhuma mensagem encontrada com esse filtro.</div>
+  <div id="periodo" class="periodo"></div>
+
+<script>
+async function carregarGrupos() {
+  const resp = await fetch('/api/grupos');
+  const grupos = await resp.json();
+  const select = document.getElementById('grupo');
+  for (const g of grupos) {
+    const opt = document.createElement('option');
+    opt.value = g.chat_id;
+    opt.textContent = `${g.chat_title} (${g.total})`;
+    select.appendChild(opt);
+  }
+}
+
+function escapeHtml(texto) {
+  const div = document.createElement('div');
+  div.textContent = texto ?? '';
+  return div.innerHTML;
+}
+
+async function carregarTop() {
+  const grupo = document.getElementById('grupo').value;
+  const minimo = document.getElementById('minimo').value || 1;
+  const limite = document.getElementById('limite').value || 50;
+
+  const params = new URLSearchParams({ min: minimo, limite: limite });
+  if (grupo) params.set('chat_id', grupo);
+
+  const resp = await fetch(`/api/top?${params.toString()}`);
+  const dados = await resp.json();
+
+  const corpo = document.getElementById('corpo');
+  const vazio = document.getElementById('vazio');
+  corpo.innerHTML = '';
+
+  if (!dados.mensagens.length) {
+    vazio.style.display = 'block';
+  } else {
+    vazio.style.display = 'none';
+    for (const m of dados.mensagens) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="data">${m.data}</td>
+        <td class="reacoes">${m.reacoes}</td>
+        <td>${escapeHtml(m.grupo)}</td>
+        <td class="mensagem">${escapeHtml(m.mensagem)}</td>
+        <td>${m.link ? `<a class="link" href="${m.link}" target="_blank" rel="noopener">abrir</a>` : '-'}</td>
+      `;
+      corpo.appendChild(tr);
+    }
+  }
+
+  const periodoEl = document.getElementById('periodo');
+  if (dados.periodo.inicio && dados.periodo.fim) {
+    periodoEl.textContent = `Periodo coberto: ${dados.periodo.inicio} ate ${dados.periodo.fim}`;
+  } else {
+    periodoEl.textContent = '';
+  }
+}
+
+document.getElementById('grupo').addEventListener('change', carregarTop);
+document.getElementById('minimo').addEventListener('change', carregarTop);
+document.getElementById('limite').addEventListener('change', carregarTop);
+
+carregarGrupos().then(carregarTop);
+</script>
+</body>
+</html>
