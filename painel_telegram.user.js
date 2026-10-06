@@ -169623,14 +169623,21 @@ store2/dist/store2.js:
     }
 
     // O chatId que guardamos (dialog.id) segue a convencao da Bot API: grupos
-    // basicos viram "-<id>", canais/supergrupos viram "-100<id>". O hash que
-    // o proprio Telegram Web usa no endereco (confirmado testando na pratica)
-    // e so "-<id>" pros dois casos, sem o "100" no meio - por isso o link
-    // parava numa tela em branco pra canal/supergrupo. Essa funcao converte.
-    function idParaAbrirNoTelegramWeb(chatId) {
+    // basicos viram "-<id>", canais/supergrupos viram "-100<id>". Olhando o
+    // codigo-fonte do proprio Telegram Web (github.com/morethanwords/tweb,
+    // src/lib/appImManager.ts, funcao onHashChangeUnsafe), o link que abre a
+    // MENSAGEM EXATA (nao so o grupo) e "#<id puro, sem sinal e sem o
+    // 100>?post=<id da mensagem>" - e'xatamente o mesmo id puro que aparece
+    // nos links nativos de "copiar link da mensagem" (t.me/c/<id>/<msg>).
+    // Essa funcao tira o sinal e o "100" do chatId que a gente guarda, pra
+    // chegar nesse id puro.
+    function idBaseDoChatId(chatId) {
         const texto = String(chatId);
         if (texto.startsWith("-100")) {
-            return "-" + texto.slice(4);
+            return texto.slice(4);
+        }
+        if (texto.startsWith("-")) {
+            return texto.slice(1);
         }
         return texto;
     }
@@ -170114,7 +170121,7 @@ store2/dist/store2.js:
                     escapeHtml(m.textPreview) +
                     "</div>";
                 item.querySelector(".trp-abrir").addEventListener("click", () => {
-                    const url = "https://web.telegram.org/k/#" + idParaAbrirNoTelegramWeb(m.chatId);
+                    const url = "https://web.telegram.org/k/#" + idBaseDoChatId(m.chatId) + "?post=" + m.messageId;
                     console.log("[Top Reacoes] abrindo:", url);
                     window.open(url, "_blank");
                 });

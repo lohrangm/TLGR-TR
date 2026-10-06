@@ -113,25 +113,26 @@ assert(top3[0].chatId === "B" && top3[0].reactionTotal === 30, "primeira do grup
 const top4 = await buscarTop(db, { chatId: null, minimo: 1, limite: 2 });
 assert(top4.length === 2, "limite=2 retorna exatamente 2 (veio " + top4.length + ")");
 
-// ---- idParaAbrirNoTelegramWeb (copiada de painel_logic.js) ----
-// Canal/supergrupo: chatId guardado (convencao Bot API) tem "-100" no meio,
-// mas o hash que o Telegram Web realmente usa no endereco e so "-" + id,
-// sem o "100" - foi essa diferenca que deixava a aba aberta em branco.
-function idParaAbrirNoTelegramWeb(chatId) {
+// ---- idBaseDoChatId (copiada de painel_logic.js) ----
+// O link que abre a MENSAGEM EXATA (visto no codigo-fonte do Telegram Web,
+// appImManager.ts) e "#<id puro>?post=<id da mensagem>" - sem sinal, sem
+// "100". Essa funcao tira o sinal e o "100" do chatId que a gente guarda
+// (convencao Bot API: "-id" pra grupo basico, "-100id" pra canal/supergrupo).
+function idBaseDoChatId(chatId) {
     const texto = String(chatId);
     if (texto.startsWith("-100")) {
-        return "-" + texto.slice(4);
+        return texto.slice(4);
+    }
+    if (texto.startsWith("-")) {
+        return texto.slice(1);
     }
     return texto;
 }
 
 assert(
-    idParaAbrirNoTelegramWeb("-1001316938498") === "-1316938498",
-    "canal/supergrupo: tira o 100 do meio (-1001316938498 -> -1316938498)"
+    idBaseDoChatId("-1001316938498") === "1316938498",
+    "canal/supergrupo: tira o sinal e o 100 do meio (-1001316938498 -> 1316938498)"
 );
-assert(
-    idParaAbrirNoTelegramWeb("-1316938498") === "-1316938498",
-    "grupo basico: ja vem sem o 100, fica igual"
-);
+assert(idBaseDoChatId("-1316938498") === "1316938498", "grupo basico: tira so o sinal (-1316938498 -> 1316938498)");
 
 console.log("\nTODOS OS TESTES PASSARAM");
