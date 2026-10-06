@@ -1,4 +1,4 @@
-import { indexedDB } from "fake-indexeddb";
+import { indexedDB, IDBKeyRange } from "fake-indexeddb";
 
 const NOME_BANCO = "TesteTopReacoes";
 const VERSAO_BANCO = 1;
@@ -34,10 +34,27 @@ function salvarChat(db, registro) {
     });
 }
 
+function buscarChat(db, chatId) {
+    return new Promise((resolve, reject) => {
+        const pedido = transacao(db, "chats", "readonly").get(chatId);
+        pedido.onsuccess = () => resolve(pedido.result || null);
+        pedido.onerror = () => reject(pedido.error);
+    });
+}
+
 function salvarMensagem(db, registro) {
     return new Promise((resolve, reject) => {
         const pedido = transacao(db, "mensagens", "readwrite").put(registro);
         pedido.onsuccess = () => resolve();
+        pedido.onerror = () => reject(pedido.error);
+    });
+}
+
+function contarMensagensDoChat(db, chatId) {
+    return new Promise((resolve, reject) => {
+        const indice = transacao(db, "mensagens", "readonly").index("por_chat");
+        const pedido = indice.count(IDBKeyRange.only(chatId));
+        pedido.onsuccess = () => resolve(pedido.result);
         pedido.onerror = () => reject(pedido.error);
     });
 }
@@ -112,6 +129,22 @@ assert(top3[0].chatId === "B" && top3[0].reactionTotal === 30, "primeira do grup
 // Limite respeitado
 const top4 = await buscarTop(db, { chatId: null, minimo: 1, limite: 2 });
 assert(top4.length === 2, "limite=2 retorna exatamente 2 (veio " + top4.length + ")");
+
+// ---- contarMensagensDoChat - base da tabela "o que ja esta salvo" ----
+const totalA = await contarMensagensDoChat(db, "A");
+assert(totalA === 3, "grupo A tem 3 mensagens com reacao salvas (veio " + totalA + ")");
+const totalB = await contarMensagensDoChat(db, "B");
+assert(totalB === 2, "grupo B tem 2 mensagens com reacao salvas (veio " + totalB + ")");
+const totalC = await contarMensagensDoChat(db, "C");
+assert(totalC === 0, "grupo nunca escaneado (C) tem 0 mensagens salvas (veio " + totalC + ")");
+
+// ---- concluido - marca se o scan do chat terminou de verdade ou ficou parcial ----
+await salvarChat(db, { chatId: "A", chatTitle: "Grupo A", lastScannedMessageId: 100, concluido: true });
+await salvarChat(db, { chatId: "B", chatTitle: "Grupo B", lastScannedMessageId: 30, concluido: false });
+const chatA = await buscarChat(db, "A");
+const chatB = await buscarChat(db, "B");
+assert(chatA.concluido === true, "grupo A persiste concluido=true");
+assert(chatB.concluido === false, "grupo B persiste concluido=false (scan parcial)");
 
 // ---- idBaseDoChatId (copiada de painel_logic.js) ----
 // O link que abre a MENSAGEM EXATA (visto no codigo-fonte do Telegram Web,

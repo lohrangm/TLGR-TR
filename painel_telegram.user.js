@@ -169565,6 +169565,18 @@ store2/dist/store2.js:
         });
     }
 
+    // Conta quantas mensagens com reacao ja estao salvas de um chat - usado
+    // pra mostrar "o que ja foi salvo", sem precisar confiar num contador
+    // separado que poderia ficar desatualizado.
+    function contarMensagensDoChat(db, chatId) {
+        return new Promise((resolve, reject) => {
+            const indice = transacao(db, "mensagens", "readonly").index("por_chat");
+            const pedido = indice.count(IDBKeyRange.only(chatId));
+            pedido.onsuccess = () => resolve(pedido.result);
+            pedido.onerror = () => reject(pedido.error);
+        });
+    }
+
     // Percorre o indice por_reacoes do maior pro menor, filtrando por chat (se
     // informado) e por reactionTotal minimo, ate juntar "limite" resultados.
     function buscarTop(db, { chatId, minimo, limite }) {
@@ -169943,15 +169955,102 @@ store2/dist/store2.js:
 
     // ---- Tela de scan ----
 
-    function telaScanner() {
+    // Lista os grupos/canais da conta (pra popular o seletor de "qual grupo
+    // escanear"). Separado de escanearTudo porque aqui so queremos
+    // id+titulo, sem mexer no banco.
+    async function carregarGruposParaSelecao() {
+        const grupos = [];
+        for await (const dialog of cliente.iterDialogs({})) {
+            if (!(dialog.isGroup || dialog.isChannel)) continue;
+            grupos.push({ chatId: String(dialog.id), titulo: dialog.title || dialog.name || String(dialog.id) });
+        }
+        grupos.sort((a, b) => a.titulo.localeCompare(b.titulo));
+        return grupos;
+    }
+
+    // Mostra o que ja esta salvo por grupo: quantas mensagens com reacao,
+    // quando foi o ultimo scan e se terminou de verdade (concluido) ou ficou
+    // parcial (cancelado no meio). Sem isso o usuario fica as cegas sobre o
+    // que ja rodou.
+    async function renderizarTabelaChats(container, db) {
+        const chats = await listarChats(db);
+        chats.sort((a, b) => (a.chatTitle || "").localeCompare(b.chatTitle || ""));
+        if (!chats.length) {
+            container.innerHTML = '<div style="color:#8b92a3;">Nenhum grupo escaneado ainda.</div>';
+            return;
+        }
+        const linhas = [];
+        for (const c of chats) {
+            const total = await contarMensagensDoChat(db, c.chatId);
+            const quando = c.lastScannedAt ? new Date(c.lastScannedAt).toLocaleString() : "-";
+            const badge = c.concluido
+                ? '<span style="color:#5ec26a;">completo</span>'
+                : '<span style="color:#e0a93a;">parcial</span>';
+            linhas.push(
+                "<tr>" +
+                    '<td style="padding:4px 6px;">' +
+                    escapeHtml(c.chatTitle || c.chatId) +
+                    "</td>" +
+                    '<td style="padding:4px 6px;text-align:right;">' +
+                    total +
+                    "</td>" +
+                    '<td style="padding:4px 6px;">' +
+                    badge +
+                    "</td>" +
+                    '<td style="padding:4px 6px;color:#8b92a3;font-size:11px;">' +
+                    escapeHtml(quando) +
+                    "</td>" +
+                    "</tr>"
+            );
+        }
+        container.innerHTML =
+            '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+            '<thead><tr style="color:#8b92a3;text-align:left;">' +
+            '<th style="padding:4px 6px;">Grupo</th><th style="padding:4px 6px;text-align:right;">Salvas</th>' +
+            '<th style="padding:4px 6px;">Status</th><th style="padding:4px 6px;">Ultimo scan</th>' +
+            "</tr></thead><tbody>" +
+            linhas.join("") +
+            "</tbody></table>";
+    }
+
+    async function telaScanner() {
         const corpo = corpoDoPainel();
         botaoVoltar(corpo);
+
+        const db = await abrirBanco();
+
+        const blocoSelecao = document.createElement("div");
+        blocoSelecao.style.marginBottom = "10px";
+        blocoSelecao.innerHTML =
+            '<label style="display:block;color:#8b92a3;margin-bottom:4px;">Grupo/canal a escanear</label>' +
+            '<select id="trp-select-grupo" style="width:100%;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:8px;box-sizing:border-box;">' +
+            '<option value="">Todos (ordem que o Telegram devolver)</option>' +
+            '<option value="" disabled id="trp-carregando-grupos">Carregando lista de grupos...</option>' +
+            "</select>";
+        corpo.appendChild(blocoSelecao);
+        const selectGrupo = blocoSelecao.querySelector("#trp-select-grupo");
+
+        carregarGruposParaSelecao()
+            .then((grupos) => {
+                const carregando = selectGrupo.querySelector("#trp-carregando-grupos");
+                if (carregando) carregando.remove();
+                for (const g of grupos) {
+                    const opcao = document.createElement("option");
+                    opcao.value = g.chatId;
+                    opcao.textContent = g.titulo;
+                    selectGrupo.appendChild(opcao);
+                }
+            })
+            .catch(() => {
+                const carregando = selectGrupo.querySelector("#trp-carregando-grupos");
+                if (carregando) carregando.textContent = "Erro ao carregar lista de grupos.";
+            });
 
         const status = document.createElement("div");
         status.style.cssText = "color:#8b92a3;margin-bottom:10px;white-space:pre-line;";
         status.textContent = scanEmAndamento
             ? "Scan ja esta rodando..."
-            : "Escaneia todos os grupos e canais da conta (conversas privadas com pessoas sao sempre ignoradas). Continua de onde parou da ultima vez - pode parar e retomar a hora que quiser.";
+            : 'Escolhe um grupo especifico ou deixa em "Todos". Continua de onde parou da ultima vez - pode parar e retomar a hora que quiser.';
         corpo.appendChild(status);
 
         const botaoIniciar = botaoAcao(corpo, scanEmAndamento ? "Scan em andamento..." : "Iniciar scan");
@@ -169966,16 +170065,33 @@ store2/dist/store2.js:
             botaoParar.textContent = "Parando...";
         });
 
+        const tituloTabela = document.createElement("div");
+        tituloTabela.style.cssText = "color:#8b92a3;margin:14px 0 6px;font-weight:600;";
+        tituloTabela.textContent = "O que ja esta salvo:";
+        corpo.appendChild(tituloTabela);
+
+        const tabela = document.createElement("div");
+        corpo.appendChild(tabela);
+        await renderizarTabelaChats(tabela, db);
+
         botaoIniciar.addEventListener("click", async () => {
             botaoIniciar.disabled = true;
             botaoIniciar.textContent = "Escaneando...";
             botaoParar.style.display = "block";
+            selectGrupo.disabled = true;
+            const apenasChatId = selectGrupo.value || null;
             try {
-                await escanearTudo((texto) => {
-                    status.textContent = texto;
-                });
+                await escanearTudo(
+                    (texto) => {
+                        status.textContent = texto;
+                    },
+                    apenasChatId,
+                    () => renderizarTabelaChats(tabela, db)
+                );
                 status.textContent = cancelarScanSolicitado
                     ? "Scan interrompido - o que ja foi visto fica salvo, pode retomar depois."
+                    : apenasChatId
+                    ? "Scan completo nesse grupo."
                     : "Scan completo em todos os grupos/canais.";
             } catch (erro) {
                 status.textContent = "Erro durante o scan: " + (erro && erro.message ? erro.message : erro);
@@ -169983,11 +170099,18 @@ store2/dist/store2.js:
                 botaoIniciar.disabled = false;
                 botaoIniciar.textContent = "Iniciar scan de novo";
                 botaoParar.style.display = "none";
+                selectGrupo.disabled = false;
+                await renderizarTabelaChats(tabela, db);
             }
         });
     }
 
-    async function escanearTudo(atualizarStatus) {
+    // apenasChatId: null/"" escaneia todos os grupos/canais (como antes); um
+    // chatId especifico faz so aquele grupo, sem depender da ordem que
+    // iterDialogs() devolve.
+    // aoAtualizarChat: callback opcional chamado toda vez que um chat e
+    // salvo (checkpoint ou fim), pra tela de scan atualizar a tabela ao vivo.
+    async function escanearTudo(atualizarStatus, apenasChatId, aoAtualizarChat) {
         if (scanEmAndamento) return;
         scanEmAndamento = true;
         cancelarScanSolicitado = false;
@@ -169998,6 +170121,8 @@ store2/dist/store2.js:
                 if (!(dialog.isGroup || dialog.isChannel)) continue;
 
                 const chatId = String(dialog.id);
+                if (apenasChatId && chatId !== apenasChatId) continue;
+
                 const chatTitle = dialog.title || dialog.name || chatId;
                 const chatUsername = (dialog.entity && dialog.entity.username) || null;
 
@@ -170009,10 +170134,14 @@ store2/dist/store2.js:
                 let maxIdVisto = ultimoId;
                 let totalVistas = 0;
                 let comReacao = 0;
+                let terminouSemCancelar = true;
                 const inicio = Date.now();
 
                 for await (const mensagem of cliente.iterMessages(dialog.entity, { minId: ultimoId, reverse: true })) {
-                    if (cancelarScanSolicitado) break;
+                    if (cancelarScanSolicitado) {
+                        terminouSemCancelar = false;
+                        break;
+                    }
                     totalVistas++;
                     maxIdVisto = Math.max(maxIdVisto, mensagem.id);
 
@@ -170042,7 +170171,9 @@ store2/dist/store2.js:
                             chatUsername,
                             lastScannedMessageId: maxIdVisto,
                             lastScannedAt: new Date().toISOString(),
+                            concluido: false,
                         });
+                        if (aoAtualizarChat) await aoAtualizarChat();
                     }
                 }
 
@@ -170052,7 +170183,11 @@ store2/dist/store2.js:
                     chatUsername,
                     lastScannedMessageId: maxIdVisto,
                     lastScannedAt: new Date().toISOString(),
+                    concluido: terminouSemCancelar,
                 });
+                if (aoAtualizarChat) await aoAtualizarChat();
+
+                if (apenasChatId) break; // so o grupo escolhido, nao segue pros outros
             }
         } finally {
             scanEmAndamento = false;
