@@ -1,14 +1,13 @@
 """Escaneia os grupos e canais do Telegram via API oficial (Telethon) e grava
 as mensagens com reacoes num banco SQLite local, de forma incremental.
 
-Por padrao, escaneia automaticamente TODOS os grupos e canais da sua conta
-(conversas privadas com pessoas sao sempre ignoradas). Para excluir algum
-grupo/canal especifico, copie config.example.json para config.json e liste
-ele em "ignorar" (por @username ou pelo identificador numerico que aparece
-no list_chats.py).
+Quais grupos/canais entram no scan e controlado pelo arquivo
+grupos_para_escanear.txt (gerado e atualizado pelo list_chats.py). Se esse
+arquivo nao existir, escaneia automaticamente TODOS os grupos e canais da
+conta (conversas privadas com pessoas sao sempre ignoradas).
 
 Uso:
-    python scan.py                                   escaneia tudo (exceto o que estiver em "ignorar")
+    python scan.py                                   escaneia tudo que estiver ativo em grupos_para_escanear.txt
     python scan.py --top 20                          escaneia e depois mostra as 20 com mais reacoes
     python scan.py --top-only 20                      so mostra o top, sem escanear de novo
     python scan.py --limite-por-chat 1000 --top 20    escaneia no maximo 1000 mensagens novas por grupo nesta
@@ -18,7 +17,6 @@ Uso:
 
 import argparse
 import asyncio
-import json
 import os
 import time
 from datetime import datetime, timezone
@@ -40,7 +38,14 @@ PHONE = os.environ.get("TELEGRAM_PHONE") or None
 
 SESSION_PATH = BASE_DIR / "data" / "session"
 DB_PATH = BASE_DIR / "data" / "reacoes.db"
-CONFIG_PATH = BASE_DIR / "config.json"
+GRUPOS_PATH = BASE_DIR / "grupos_para_escanear.txt"
+
+CABECALHO_GRUPOS = (
+    "# Grupos e canais do Telegram - edite esta lista livremente.\n"
+    "# Apague (ou comente com # na frente) as linhas dos grupos que voce NAO quer escanear.\n"
+    "# Formato: identificador | nome (o nome e so pra voce reconhecer, o scan usa o identificador)\n"
+    "# Depois de editar e salvar, basta rodar o scan.py normalmente - ele le esse arquivo sozinho.\n"
+)
 
 
 def build_link(entity, message_id):
@@ -73,24 +78,16 @@ def preview_text(message):
     return text
 
 
-def load_filters():
-    """Le config.json e devolve (incluir, ignorar), normalizados em minusculo
-    e sem @.
-
-    Se "incluir" tiver qualquer item, vira modo lista branca: so esses
-    grupos/canais sao escaneados, e "ignorar" nao tem efeito nesse modo.
-    Com "incluir" vazio (padrao), escaneia tudo, exceto o que estiver em
-    "ignorar".
-    """
-    if not CONFIG_PATH.exists():
-        return set(), set()
-    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    incluir = {str(item).lstrip("@").lower() for item in config.get("incluir", [])}
-    ignorar = {str(item).lstrip("@").lower() for item in config.get("ignorar", [])}
-    return incluir, ignorar
+def identificador_display(dialog):
+    """Identificador no formato mostrado pro usuario: @username, ou o id
+    numerico quando o chat nao tem username publico."""
+    username = getattr(dialog.entity, "username", None)
+    return f"@{username}" if username else str(dialog.id)
 
 
 def identificadores_do_dialog(dialog):
+    """Todas as formas validas de identificar esse dialog (id numerico e,
+    se tiver, username em minusculo), pra bater contra a lista de selecao."""
     username = getattr(dialog.entity, "username", None)
     ids = {str(dialog.id)}
     if username:
@@ -98,11 +95,79 @@ def identificadores_do_dialog(dialog):
     return ids
 
 
-def deve_escanear(dialog, incluir, ignorar):
-    ids = identificadores_do_dialog(dialog)
-    if incluir:
-        return bool(ids & incluir)
-    return not bool(ids & ignorar)
+def formatar_linha_grupo(identificador, nome):
+    return f"{identificador} | {nome}"
+
+
+def ler_identificador_da_linha(linha):
+    """Extrai o identificador (antes do '|') de uma linha do arquivo de
+    selecao, ja normalizado (sem @, minusculo) pra comparar com
+    identificadores_do_dialog()."""
+    return linha.split("|", 1)[0].strip().lstrip("@").lower()
+
+
+def carregar_selecao():
+    """Le grupos_para_escanear.txt e devolve o conjunto de identificadores
+    ativos (linhas que nao estao vazias nem comentadas com #).
+
+    Devolve None se o arquivo nao existir - nesse caso o scan roda no modo
+    automatico (escaneia todos os grupos/canais).
+    """
+    if not GRUPOS_PATH.exists():
+        return None
+    ativos = set()
+    for linha in GRUPOS_PATH.read_text(encoding="utf-8").splitlines():
+        linha = linha.strip()
+        if not linha or linha.startswith("#") or "|" not in linha:
+            continue
+        ativos.add(ler_identificador_da_linha(linha))
+    return ativos
+
+
+def atualizar_arquivo_grupos(grupos_e_canais):
+    """Cria ou atualiza grupos_para_escanear.txt a partir dos grupos/canais
+    encontrados agora (lista de dialogs do telethon).
+
+    Grupos ja presentes no arquivo (ativos ou comentados) sao preservados do
+    jeito que o usuario deixou. Grupos novos (que a conta entrou desde a
+    ultima vez) sao adicionados numa secao separada no final, pra revisao -
+    nunca sobrescreve uma escolha que o usuario ja fez.
+
+    Devolve "criado", "novos" ou "sem_mudanca".
+    """
+    atuais = [(identificadores_do_dialog(d), identificador_display(d), d.name) for d in grupos_e_canais]
+
+    if not GRUPOS_PATH.exists():
+        linhas = [formatar_linha_grupo(disp, nome) for _ids, disp, nome in atuais]
+        GRUPOS_PATH.write_text(CABECALHO_GRUPOS + "\n" + "\n".join(linhas) + "\n", encoding="utf-8")
+        return "criado"
+
+    conteudo_atual = GRUPOS_PATH.read_text(encoding="utf-8")
+    conhecidos = set()
+    for linha in conteudo_atual.splitlines():
+        linha_limpa = linha.strip().lstrip("#").strip()
+        if not linha_limpa or "|" not in linha_limpa:
+            continue
+        conhecidos.add(ler_identificador_da_linha(linha_limpa))
+
+    novos = [(ids, disp, nome) for ids, disp, nome in atuais if not (ids & conhecidos)]
+    if not novos:
+        return "sem_mudanca"
+
+    secao_novos = (
+        "\n\n# NOVOS - a conta entrou nesses depois da ultima vez, ainda nao revisados:\n"
+        + "\n".join(formatar_linha_grupo(disp, nome) for _ids, disp, nome in novos)
+        + "\n"
+    )
+    with GRUPOS_PATH.open("a", encoding="utf-8") as f:
+        f.write(secao_novos)
+    return "novos"
+
+
+def deve_escanear(dialog, selecao):
+    if selecao is None:
+        return True
+    return bool(identificadores_do_dialog(dialog) & selecao)
 
 
 async def scan_chat(client, conn, entity, limite=None):
@@ -159,7 +224,7 @@ async def scan_chat(client, conn, entity, limite=None):
 
 
 async def run_scan(conn, limite_por_chat=None):
-    incluir, ignorar = load_filters()
+    selecao = carregar_selecao()
     client = TelegramClient(str(SESSION_PATH), API_ID, API_HASH)
     await client.start(
         phone=PHONE,
@@ -169,8 +234,8 @@ async def run_scan(conn, limite_por_chat=None):
         async for dialog in client.iter_dialogs():
             if not (dialog.is_group or dialog.is_channel):
                 continue
-            if not deve_escanear(dialog, incluir, ignorar):
-                print(f"[{dialog.name}] fora do escopo (config.json).")
+            if not deve_escanear(dialog, selecao):
+                print(f"[{dialog.name}] fora do escopo (nao esta ativo em grupos_para_escanear.txt).")
                 continue
             await scan_chat(client, conn, dialog.entity, limite=limite_por_chat)
     finally:

@@ -5,3 +5,4 @@ __pycache__/
 data/*.session
 data/*.session-journal
 data/*.db
+grupos_para_escanear.txt
