@@ -137,6 +137,19 @@
         return d.toISOString();
     }
 
+    // O chatId que guardamos (dialog.id) segue a convencao da Bot API: grupos
+    // basicos viram "-<id>", canais/supergrupos viram "-100<id>". O hash que
+    // o proprio Telegram Web usa no endereco (confirmado testando na pratica)
+    // e so "-<id>" pros dois casos, sem o "100" no meio - por isso o link
+    // parava numa tela em branco pra canal/supergrupo. Essa funcao converte.
+    function idParaAbrirNoTelegramWeb(chatId) {
+        const texto = String(chatId);
+        if (texto.startsWith("-100")) {
+            return "-" + texto.slice(4);
+        }
+        return texto;
+    }
+
     function criarBotao() {
         const botao = document.createElement("button");
         botao.textContent = "Top Reacoes";
@@ -611,14 +624,12 @@
                     "</div>" +
                     '<div style="color:#8b92a3;font-size:11px;">' +
                     escapeHtml(m.chatTitle) +
-                    " - id: " +
-                    escapeHtml(m.chatId) +
                     "</div>" +
                     "<div>" +
                     escapeHtml(m.textPreview) +
                     "</div>";
                 item.querySelector(".trp-abrir").addEventListener("click", () => {
-                    const url = "https://web.telegram.org/k/#" + m.chatId;
+                    const url = "https://web.telegram.org/k/#" + idParaAbrirNoTelegramWeb(m.chatId);
                     console.log("[Top Reacoes] abrindo:", url);
                     window.open(url, "_blank");
                 });
