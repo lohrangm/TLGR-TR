@@ -37,6 +37,8 @@ Os dados ficam em data/reacoes.db (SQLite puro - abre com qualquer client SQL, D
 
 Sobe um servidor local (so acessivel no seu computador) e abre sozinho no navegador em http://127.0.0.1:8765. Mostra a tabela de top reacoes com filtro por grupo e por minimo de reacoes, e cada linha tem um link que abre a mensagem direto no Telegram. Le direto do banco, entao sempre mostra o que ja foi escaneado ate o momento - roda o scan.py de novo quando quiser dado mais recente, e so atualizar a pagina (F5) no navegador. Pra parar o servidor, Ctrl+C no terminal.
 
+Os links de grupos/canais publicos abrem como pagina web (sem precisar do app do Telegram instalado). Grupos/canais privados (sem @username publico) nao tem essa opcao - o link deles so abre se voce tiver o Telegram Desktop instalado ou estiver logado em web.telegram.org no navegador.
+
 ## Escolher quais grupos/canais entram no scan
 
 O `list_chats.py` cria (na primeira vez) o arquivo grupos_para_escanear.txt, com uma linha por grupo/canal, no formato:

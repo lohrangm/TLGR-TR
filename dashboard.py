@@ -46,6 +46,22 @@ def listar_grupos(conn):
     return [{"chat_id": r["chat_id"], "chat_title": r["chat_title"], "total": r["total"]} for r in rows]
 
 
+def link_para_preview(link):
+    """Converte um link t.me normal para a versao de preview publico (/s/),
+    que abre direto como pagina no navegador em vez de tentar chamar o app
+    do Telegram (protocolo tg://). So existe para chats publicos - links de
+    canal privado (/c/) nao tem equivalente e continuam como estao."""
+    if not link:
+        return link
+    prefixo = "https://t.me/"
+    if not link.startswith(prefixo):
+        return link
+    resto = link[len(prefixo):]
+    if resto.startswith("c/"):
+        return link
+    return f"{prefixo}s/{resto}"
+
+
 def buscar_top(conn, minimo, chat_id, limite):
     sql = """
         SELECT m.date_utc, m.reaction_total, COALESCE(c.chat_title, CAST(m.chat_id AS TEXT)) AS chat_title,
@@ -68,7 +84,7 @@ def buscar_top(conn, minimo, chat_id, limite):
             "reacoes": r["reaction_total"],
             "grupo": r["chat_title"],
             "mensagem": r["text_preview"],
-            "link": r["link"],
+            "link": link_para_preview(r["link"]),
         }
         for r in rows
     ]
