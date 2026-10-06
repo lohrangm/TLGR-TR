@@ -131,7 +131,10 @@ async def scan_chat(client, conn, entity):
 async def run_scan(conn):
     ignore_set = load_ignore_set()
     client = TelegramClient(str(SESSION_PATH), API_ID, API_HASH)
-    await client.start(phone=PHONE)
+    await client.start(
+        phone=PHONE,
+        password=lambda: input("Senha de verificacao em duas etapas (fica visivel ao digitar): "),
+    )
     try:
         async for dialog in client.iter_dialogs():
             if not (dialog.is_group or dialog.is_channel):
