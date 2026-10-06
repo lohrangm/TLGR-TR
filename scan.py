@@ -1,8 +1,14 @@
-"""Escaneia grupos/canais do Telegram via API oficial (Telethon) e grava as
-mensagens com reacoes num banco SQLite local, de forma incremental.
+"""Escaneia os grupos e canais do Telegram via API oficial (Telethon) e grava
+as mensagens com reacoes num banco SQLite local, de forma incremental.
+
+Por padrao, escaneia automaticamente TODOS os grupos e canais da sua conta
+(conversas privadas com pessoas sao sempre ignoradas). Para excluir algum
+grupo/canal especifico, copie config.example.json para config.json e liste
+ele em "ignorar" (por @username ou pelo identificador numerico que aparece
+no list_chats.py).
 
 Uso:
-    python scan.py                 escaneia todos os chats do config.json
+    python scan.py                 escaneia tudo (exceto o que estiver em "ignorar")
     python scan.py --top 20        escaneia e depois mostra as 20 com mais reacoes
     python scan.py --top-only 20   so mostra o top, sem escanear de novo
 """
@@ -63,10 +69,25 @@ def preview_text(message):
     return text
 
 
-async def scan_chat(client, conn, chat_ref):
-    entity = await client.get_entity(chat_ref)
+def load_ignore_set():
+    if not CONFIG_PATH.exists():
+        return set()
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    return {str(item).lstrip("@").lower() for item in config.get("ignorar", [])}
+
+
+def is_ignored(dialog, ignore_set):
+    if not ignore_set:
+        return False
+    username = getattr(dialog.entity, "username", None)
+    if username and username.lower() in ignore_set:
+        return True
+    return str(dialog.id) in ignore_set
+
+
+async def scan_chat(client, conn, entity):
     chat_id = entity.id
-    chat_title = getattr(entity, "title", None) or getattr(entity, "first_name", None) or str(chat_ref)
+    chat_title = getattr(entity, "title", None) or getattr(entity, "first_name", None) or str(chat_id)
     chat_username = getattr(entity, "username", None)
 
     last_id = db.get_last_scanned_message_id(conn, chat_id)
@@ -107,12 +128,18 @@ async def scan_chat(client, conn, chat_ref):
     print(f"[{chat_title}] {total_seen} mensagens novas analisadas, {new_with_reactions} com reacoes salvas.")
 
 
-async def run_scan(conn, chats):
+async def run_scan(conn):
+    ignore_set = load_ignore_set()
     client = TelegramClient(str(SESSION_PATH), API_ID, API_HASH)
     await client.start(phone=PHONE)
     try:
-        for chat_ref in chats:
-            await scan_chat(client, conn, chat_ref)
+        async for dialog in client.iter_dialogs():
+            if not (dialog.is_group or dialog.is_channel):
+                continue
+            if is_ignored(dialog, ignore_set):
+                print(f"[{dialog.name}] ignorado (esta na lista de exclusao).")
+                continue
+            await scan_chat(client, conn, dialog.entity)
     finally:
         await client.disconnect()
 
@@ -133,16 +160,6 @@ def show_top(conn, limit):
         print(f"\nPeriodo coberto no banco: {min_date[:10]} ate {max_date[:10]}")
 
 
-def load_chats():
-    if not CONFIG_PATH.exists():
-        raise SystemExit(
-            f"Arquivo nao encontrado: {CONFIG_PATH}\n"
-            "Copie config.example.json para config.json e liste seus grupos/canais."
-        )
-    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    return config["chats"]
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--top", type=int, default=None, help="Escaneia e mostra o top N depois")
@@ -155,8 +172,7 @@ def main():
         show_top(conn, args.top_only)
         return
 
-    chats = load_chats()
-    asyncio.run(run_scan(conn, chats))
+    asyncio.run(run_scan(conn))
 
     if args.top is not None:
         show_top(conn, args.top)

@@ -1,6 +1,6 @@
-﻿{
-  "chats": [
-    "@nome_do_canal_ou_grupo",
+{
+  "ignorar": [
+    "@algum_canal_que_voce_nao_quer_escanear",
     "-1001234567890"
   ]
 }
