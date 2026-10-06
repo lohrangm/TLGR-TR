@@ -4,11 +4,15 @@
   "description": "Gera o painel_telegram.user.js a partir do teleproto (cliente MTProto em JS), empacotado pra rodar no navegador via Tampermonkey.",
   "private": true,
   "scripts": {
-    "build": "node build.mjs && node montar_userscript.mjs"
+    "build": "node build.mjs && node montar_userscript.mjs",
+    "test": "node test_indexeddb_logic.mjs"
   },
   "dependencies": {
     "esbuild": "^0.28.2",
     "esbuild-plugin-polyfill-node": "^0.3.0",
     "teleproto": "^1.229.1"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.5"
   }
 }

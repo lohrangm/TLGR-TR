@@ -169497,8 +169497,130 @@ store2/dist/store2.js:
     const CHAVE_API_HASH = "trp_api_hash";
     const CHAVE_SESSAO = "trp_session";
 
+    const NOME_BANCO = "TopReacoesTelegram";
+    const VERSAO_BANCO = 1;
+
     let cliente = null; // instancia conectada, reaproveitada entre aberturas do painel
     let painel = null;
+    let bancoPromessa = null;
+    let scanEmAndamento = false;
+    let cancelarScanSolicitado = false;
+
+    // ---- IndexedDB: guarda tudo que o scan encontra, direto no navegador ----
+
+    function abrirBanco() {
+        if (bancoPromessa) return bancoPromessa;
+        bancoPromessa = new Promise((resolve, reject) => {
+            const pedido = indexedDB.open(NOME_BANCO, VERSAO_BANCO);
+            pedido.onupgradeneeded = () => {
+                const db = pedido.result;
+                if (!db.objectStoreNames.contains("chats")) {
+                    db.createObjectStore("chats", { keyPath: "chatId" });
+                }
+                if (!db.objectStoreNames.contains("mensagens")) {
+                    const store = db.createObjectStore("mensagens", { keyPath: "key" });
+                    store.createIndex("por_reacoes", "reactionTotal");
+                    store.createIndex("por_chat", "chatId");
+                }
+            };
+            pedido.onsuccess = () => resolve(pedido.result);
+            pedido.onerror = () => reject(pedido.error);
+        });
+        return bancoPromessa;
+    }
+
+    function transacao(db, loja, modo) {
+        return db.transaction(loja, modo).objectStore(loja);
+    }
+
+    function salvarChat(db, registro) {
+        return new Promise((resolve, reject) => {
+            const pedido = transacao(db, "chats", "readwrite").put(registro);
+            pedido.onsuccess = () => resolve();
+            pedido.onerror = () => reject(pedido.error);
+        });
+    }
+
+    function buscarChat(db, chatId) {
+        return new Promise((resolve, reject) => {
+            const pedido = transacao(db, "chats", "readonly").get(chatId);
+            pedido.onsuccess = () => resolve(pedido.result || null);
+            pedido.onerror = () => reject(pedido.error);
+        });
+    }
+
+    function listarChats(db) {
+        return new Promise((resolve, reject) => {
+            const pedido = transacao(db, "chats", "readonly").getAll();
+            pedido.onsuccess = () => resolve(pedido.result || []);
+            pedido.onerror = () => reject(pedido.error);
+        });
+    }
+
+    function salvarMensagem(db, registro) {
+        return new Promise((resolve, reject) => {
+            const pedido = transacao(db, "mensagens", "readwrite").put(registro);
+            pedido.onsuccess = () => resolve();
+            pedido.onerror = () => reject(pedido.error);
+        });
+    }
+
+    // Percorre o indice por_reacoes do maior pro menor, filtrando por chat (se
+    // informado) e por reactionTotal minimo, ate juntar "limite" resultados.
+    function buscarTop(db, { chatId, minimo, limite }) {
+        return new Promise((resolve, reject) => {
+            const resultados = [];
+            const indice = transacao(db, "mensagens", "readonly").index("por_reacoes");
+            const pedido = indice.openCursor(null, "prev");
+            let visitados = 0;
+            const LIMITE_VISITAS = 50000; // trava de seguranca, evita loop gigante
+            pedido.onsuccess = () => {
+                const cursor = pedido.result;
+                if (!cursor || resultados.length >= limite || visitados >= LIMITE_VISITAS) {
+                    resolve(resultados);
+                    return;
+                }
+                visitados++;
+                const valor = cursor.value;
+                if (valor.reactionTotal < minimo) {
+                    resolve(resultados); // indice esta ordenado, dai pra baixo so vem menor ainda
+                    return;
+                }
+                if (!chatId || valor.chatId === chatId) {
+                    resultados.push(valor);
+                }
+                cursor.continue();
+            };
+            pedido.onerror = () => reject(pedido.error);
+        });
+    }
+
+    // ---- Extracao de dados da mensagem/dialogo, espelhando o scan.py ----
+
+    function extrairReacoes(mensagem) {
+        const reactions = [];
+        let total = 0;
+        if (mensagem.reactions && mensagem.reactions.results) {
+            for (const r of mensagem.reactions.results) {
+                const emoji = (r.reaction && r.reaction.emoticon) || "custom";
+                reactions.push({ emoji, count: r.count });
+                total += r.count;
+            }
+        }
+        return { reactions, total };
+    }
+
+    function textoPreview(mensagem) {
+        let texto = (mensagem.message || "").trim().replace(/\s+/g, " ");
+        if (!texto) texto = "[midia ou mensagem sem texto]";
+        if (texto.length > 120) texto = texto.slice(0, 120) + "...";
+        return texto;
+    }
+
+    function dataIso(mensagem) {
+        const d = mensagem.date instanceof Date ? mensagem.date : new Date(mensagem.date * 1000);
+        return d.toISOString();
+    }
 
     function criarBotao() {
         const botao = document.createElement("button");
@@ -169766,10 +169888,11 @@ store2/dist/store2.js:
                 '<div style="color:#8b92a3;">' +
                 escapeHtml(usuario) +
                 "</div>" +
-                "</div>" +
-                '<div style="color:#8b92a3;margin-bottom:10px;">' +
-                "Login feito direto aqui dentro, sem servidor externo. A sessao fica salva no proprio Tampermonkey - nao precisa logar de novo ao reabrir o painel." +
                 "</div>";
+            const botaoEscanear = botaoAcao(corpo, "Escanear grupos/canais");
+            botaoEscanear.addEventListener("click", () => telaScanner());
+            const botaoResultados = botaoAcao(corpo, "Ver top reacoes");
+            botaoResultados.addEventListener("click", () => telaResultados());
             const botaoSair = botaoAcao(corpo, "Sair (apagar sessao salva)");
             botaoSair.style.background = "#3a2f2f";
             botaoSair.addEventListener("click", async () => {
@@ -169786,6 +169909,207 @@ store2/dist/store2.js:
         } catch (erro) {
             textoAviso(corpo, "Erro ao carregar a conta: " + (erro && erro.message ? erro.message : erro), "#ff6b6b");
         }
+    }
+
+    function botaoVoltar(corpo) {
+        const botao = document.createElement("button");
+        botao.textContent = "< Voltar";
+        botao.style.cssText =
+            "background:none;border:none;color:#8b92a3;cursor:pointer;font-size:12px;margin-bottom:10px;padding:0;";
+        botao.addEventListener("click", () => telaLogado());
+        corpo.appendChild(botao);
+        return botao;
+    }
+
+    // ---- Tela de scan ----
+
+    function telaScanner() {
+        const corpo = corpoDoPainel();
+        botaoVoltar(corpo);
+
+        const status = document.createElement("div");
+        status.style.cssText = "color:#8b92a3;margin-bottom:10px;white-space:pre-line;";
+        status.textContent = scanEmAndamento
+            ? "Scan ja esta rodando..."
+            : "Escaneia todos os grupos e canais da conta (conversas privadas com pessoas sao sempre ignoradas). Continua de onde parou da ultima vez - pode parar e retomar a hora que quiser.";
+        corpo.appendChild(status);
+
+        const botaoIniciar = botaoAcao(corpo, scanEmAndamento ? "Scan em andamento..." : "Iniciar scan");
+        botaoIniciar.disabled = scanEmAndamento;
+
+        const botaoParar = botaoAcao(corpo, "Parar");
+        botaoParar.style.background = "#3a2f2f";
+        botaoParar.style.display = scanEmAndamento ? "block" : "none";
+        botaoParar.addEventListener("click", () => {
+            cancelarScanSolicitado = true;
+            botaoParar.disabled = true;
+            botaoParar.textContent = "Parando...";
+        });
+
+        botaoIniciar.addEventListener("click", async () => {
+            botaoIniciar.disabled = true;
+            botaoIniciar.textContent = "Escaneando...";
+            botaoParar.style.display = "block";
+            try {
+                await escanearTudo((texto) => {
+                    status.textContent = texto;
+                });
+                status.textContent = cancelarScanSolicitado
+                    ? "Scan interrompido - o que ja foi visto fica salvo, pode retomar depois."
+                    : "Scan completo em todos os grupos/canais.";
+            } catch (erro) {
+                status.textContent = "Erro durante o scan: " + (erro && erro.message ? erro.message : erro);
+            } finally {
+                botaoIniciar.disabled = false;
+                botaoIniciar.textContent = "Iniciar scan de novo";
+                botaoParar.style.display = "none";
+            }
+        });
+    }
+
+    async function escanearTudo(atualizarStatus) {
+        if (scanEmAndamento) return;
+        scanEmAndamento = true;
+        cancelarScanSolicitado = false;
+        const db = await abrirBanco();
+        try {
+            for await (const dialog of cliente.iterDialogs({})) {
+                if (cancelarScanSolicitado) break;
+                if (!(dialog.isGroup || dialog.isChannel)) continue;
+
+                const chatId = String(dialog.id);
+                const chatTitle = dialog.title || dialog.name || chatId;
+                const chatUsername = (dialog.entity && dialog.entity.username) || null;
+
+                const chatSalvo = await buscarChat(db, chatId);
+                const ultimoId = (chatSalvo && chatSalvo.lastScannedMessageId) || 0;
+
+                atualizarStatus(`Escaneando: ${chatTitle} (a partir da mensagem ${ultimoId})...`);
+
+                let maxIdVisto = ultimoId;
+                let totalVistas = 0;
+                let comReacao = 0;
+                const inicio = Date.now();
+
+                for await (const mensagem of cliente.iterMessages(dialog.entity, { minId: ultimoId, reverse: true })) {
+                    if (cancelarScanSolicitado) break;
+                    totalVistas++;
+                    maxIdVisto = Math.max(maxIdVisto, mensagem.id);
+
+                    const { reactions, total } = extrairReacoes(mensagem);
+                    if (total > 0) {
+                        await salvarMensagem(db, {
+                            key: chatId + ":" + mensagem.id,
+                            chatId,
+                            messageId: mensagem.id,
+                            dateUtc: dataIso(mensagem),
+                            textPreview: textoPreview(mensagem),
+                            reactionTotal: total,
+                            reactions,
+                            chatTitle,
+                        });
+                        comReacao++;
+                    }
+
+                    if (totalVistas % 500 === 0) {
+                        const segundos = Math.round((Date.now() - inicio) / 1000);
+                        atualizarStatus(
+                            `${chatTitle}: ${totalVistas} mensagens verificadas (${segundos}s), ${comReacao} com reacao...`
+                        );
+                        await salvarChat(db, {
+                            chatId,
+                            chatTitle,
+                            chatUsername,
+                            lastScannedMessageId: maxIdVisto,
+                            lastScannedAt: new Date().toISOString(),
+                        });
+                    }
+                }
+
+                await salvarChat(db, {
+                    chatId,
+                    chatTitle,
+                    chatUsername,
+                    lastScannedMessageId: maxIdVisto,
+                    lastScannedAt: new Date().toISOString(),
+                });
+            }
+        } finally {
+            scanEmAndamento = false;
+        }
+    }
+
+    // ---- Tela de resultados ----
+
+    async function telaResultados() {
+        const corpo = corpoDoPainel();
+        botaoVoltar(corpo);
+
+        const db = await abrirBanco();
+        const chats = await listarChats(db);
+        chats.sort((a, b) => (a.chatTitle || "").localeCompare(b.chatTitle || ""));
+
+        const filtros = document.createElement("div");
+        filtros.style.cssText = "display:flex;gap:8px;margin-bottom:10px;";
+        filtros.innerHTML =
+            '<select id="trp-filtro-grupo" style="flex:1;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
+            '<option value="">Todos os grupos</option>' +
+            "</select>" +
+            '<input id="trp-filtro-minimo" type="number" min="1" value="1" style="width:60px;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">';
+        corpo.appendChild(filtros);
+
+        const selectGrupo = filtros.querySelector("#trp-filtro-grupo");
+        for (const c of chats) {
+            const opcao = document.createElement("option");
+            opcao.value = c.chatId;
+            opcao.textContent = (c.chatTitle || c.chatId) + " (ate msg " + (c.lastScannedMessageId || 0) + ")";
+            selectGrupo.appendChild(opcao);
+        }
+        const inputMinimo = filtros.querySelector("#trp-filtro-minimo");
+
+        const lista = document.createElement("div");
+        corpo.appendChild(lista);
+
+        if (!chats.length) {
+            lista.innerHTML = '<div style="color:#8b92a3;">Nenhum grupo escaneado ainda. Roda o scan primeiro.</div>';
+            return;
+        }
+
+        async function atualizarLista() {
+            lista.innerHTML = '<div style="color:#8b92a3;">Carregando...</div>';
+            const chatId = selectGrupo.value || null;
+            const minimo = parseInt(inputMinimo.value, 10) || 1;
+            const mensagens = await buscarTop(db, { chatId, minimo, limite: 50 });
+            if (!mensagens.length) {
+                lista.innerHTML = '<div style="color:#8b92a3;">Nenhuma mensagem encontrada com esse filtro.</div>';
+                return;
+            }
+            lista.innerHTML = "";
+            for (const m of mensagens) {
+                const item = document.createElement("div");
+                item.style.cssText = "padding:8px 0;border-bottom:1px solid #2a2f3a;cursor:pointer;";
+                item.innerHTML =
+                    '<div style="color:#4da3ff;font-weight:600;">' +
+                    m.reactionTotal +
+                    " reacoes - " +
+                    escapeHtml(m.dateUtc.slice(0, 10)) +
+                    "</div>" +
+                    '<div style="color:#8b92a3;font-size:11px;">' +
+                    escapeHtml(m.chatTitle) +
+                    "</div>" +
+                    "<div>" +
+                    escapeHtml(m.textPreview) +
+                    "</div>";
+                item.addEventListener("click", () => {
+                    window.location.hash = "#" + m.chatId;
+                });
+                lista.appendChild(item);
+            }
+        }
+
+        selectGrupo.addEventListener("change", atualizarLista);
+        inputMinimo.addEventListener("change", atualizarLista);
+        await atualizarLista();
     }
 
     function escapeHtml(texto) {
