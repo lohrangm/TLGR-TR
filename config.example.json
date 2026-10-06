@@ -1,6 +1,7 @@
 {
-  "ignorar": [
-    "@algum_canal_que_voce_nao_quer_escanear",
+  "incluir": [
+    "@algum_canal_que_voce_quer_escanear",
     "-1001234567890"
-  ]
+  ],
+  "ignorar": []
 }

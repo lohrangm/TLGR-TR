@@ -1,6 +1,6 @@
 # Telegram Top Reacoes
 
-Escaneia grupos e canais do Telegram via API oficial (Telethon/MTProto) e guarda as mensagens com mais reacoes num banco SQLite local. Por padrao, escaneia automaticamente TODOS os grupos e canais da sua conta - conversas privadas com pessoas sao sempre ignoradas. Se voce entrar num canal novo, sair de um ou ele mudar de nome, o proximo scan ja reflete isso sozinho, sem precisar editar nada.
+Escaneia grupos e canais do Telegram via API oficial (Telethon/MTProto) e guarda as mensagens com mais reacoes num banco SQLite local. Conversas privadas com pessoas sao sempre ignoradas. Por padrao escaneia automaticamente todos os grupos/canais (e reflete sozinho quando voce entra ou sai de algum), mas voce pode restringir pra so os que importam via config.json - veja "Escolher quais grupos/canais entram no scan".
 
 ## Setup (uma vez so)
 
@@ -15,7 +15,7 @@ Escaneia grupos e canais do Telegram via API oficial (Telethon/MTProto) e guarda
 
    python list_chats.py
 
-   Vai pedir o codigo de login (chega por mensagem no proprio Telegram ou SMS) e, se voce tiver verificacao em duas etapas, a senha. Depois disso fica uma sessao salva em data/session.session e os proximos comandos nao pedem login de novo. Esse script tambem lista todos os grupos/canais que voce participa, com o status "sera escaneado" ou "ignorado" - serve pra conferir o que vai entrar antes de rodar o scan de verdade.
+   Vai pedir o codigo de login (chega por mensagem no proprio Telegram ou SMS) e, se voce tiver verificacao em duas etapas, a senha. Depois disso fica uma sessao salva em data/session.session e os proximos comandos nao pedem login de novo. Esse script tambem lista todos os grupos/canais que voce participa, com o status "sera escaneado" ou "fora do escopo" - serve pra conferir o que vai entrar antes de rodar o scan de verdade. Rode ele de novo sempre que quiser conferir essa lista depois de mexer no config.json.
 
 ## Uso do dia a dia
 
@@ -29,9 +29,14 @@ Durante o scan, ele imprime o progresso a cada 500 mensagens verificadas dentro 
 
 Os dados ficam em data/reacoes.db (SQLite puro - abre com qualquer client SQL, DB Browser for SQLite, ou "sqlite3 data/reacoes.db" no terminal). Consultas prontas em queries.sql.
 
-## Excluir um grupo/canal especifico do scan
+## Escolher quais grupos/canais entram no scan
 
-Por padrao tudo e escaneado. Se quiser excluir algum grupo ou canal especifico, copie config.example.json para config.json e liste ele em "ignorar" (por @username ou pelo identificador numerico que o list_chats.py mostra).
+Copie config.example.json para config.json e escolha um dos dois modos (por @username ou pelo identificador numerico que o list_chats.py mostra):
+
+- **Lista branca ("incluir")**: se voce listar qualquer grupo/canal em "incluir", so esses sao escaneados - todo o resto fica fora, mesmo que "ignorar" esteja vazio. Use esse modo se voce sabe exatamente quais grupos importam (ex: so os de trabalho) e nao quer gastar tempo escaneando o resto.
+- **Lista de exclusao ("ignorar")**: com "incluir" vazio (ou ausente), o scan volta ao padrao automatico - pega tudo, exceto o que estiver em "ignorar". Use esse modo se quiser que grupos novos entrem sozinhos e so precisa tirar alguns poucos de fora.
+
+Rode `python list_chats.py` depois de editar o config.json pra conferir o resultado antes de rodar o scan de verdade.
 
 ## Limitacoes ja conhecidas
 

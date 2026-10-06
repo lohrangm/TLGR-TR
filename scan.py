@@ -73,20 +73,36 @@ def preview_text(message):
     return text
 
 
-def load_ignore_set():
+def load_filters():
+    """Le config.json e devolve (incluir, ignorar), normalizados em minusculo
+    e sem @.
+
+    Se "incluir" tiver qualquer item, vira modo lista branca: so esses
+    grupos/canais sao escaneados, e "ignorar" nao tem efeito nesse modo.
+    Com "incluir" vazio (padrao), escaneia tudo, exceto o que estiver em
+    "ignorar".
+    """
     if not CONFIG_PATH.exists():
-        return set()
+        return set(), set()
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    return {str(item).lstrip("@").lower() for item in config.get("ignorar", [])}
+    incluir = {str(item).lstrip("@").lower() for item in config.get("incluir", [])}
+    ignorar = {str(item).lstrip("@").lower() for item in config.get("ignorar", [])}
+    return incluir, ignorar
 
 
-def is_ignored(dialog, ignore_set):
-    if not ignore_set:
-        return False
+def identificadores_do_dialog(dialog):
     username = getattr(dialog.entity, "username", None)
-    if username and username.lower() in ignore_set:
-        return True
-    return str(dialog.id) in ignore_set
+    ids = {str(dialog.id)}
+    if username:
+        ids.add(username.lower())
+    return ids
+
+
+def deve_escanear(dialog, incluir, ignorar):
+    ids = identificadores_do_dialog(dialog)
+    if incluir:
+        return bool(ids & incluir)
+    return not bool(ids & ignorar)
 
 
 async def scan_chat(client, conn, entity, limite=None):
@@ -143,7 +159,7 @@ async def scan_chat(client, conn, entity, limite=None):
 
 
 async def run_scan(conn, limite_por_chat=None):
-    ignore_set = load_ignore_set()
+    incluir, ignorar = load_filters()
     client = TelegramClient(str(SESSION_PATH), API_ID, API_HASH)
     await client.start(
         phone=PHONE,
@@ -153,8 +169,8 @@ async def run_scan(conn, limite_por_chat=None):
         async for dialog in client.iter_dialogs():
             if not (dialog.is_group or dialog.is_channel):
                 continue
-            if is_ignored(dialog, ignore_set):
-                print(f"[{dialog.name}] ignorado (esta na lista de exclusao).")
+            if not deve_escanear(dialog, incluir, ignorar):
+                print(f"[{dialog.name}] fora do escopo (config.json).")
                 continue
             await scan_chat(client, conn, dialog.entity, limite=limite_por_chat)
     finally:
