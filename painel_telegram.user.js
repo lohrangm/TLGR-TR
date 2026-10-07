@@ -169505,6 +169505,8 @@ store2/dist/store2.js:
     let bancoPromessa = null;
     let scanEmAndamento = false;
     let cancelarScanSolicitado = false;
+    let saidaPendente = false; // true = usuario ja clicou "sair" uma vez, espera o segundo clique pra confirmar
+    let timeoutSaida = null;
 
     // ---- IndexedDB: guarda tudo que o scan encontra, direto no navegador ----
 
@@ -169711,14 +169713,64 @@ store2/dist/store2.js:
     }
 
     function renderizarCabecalho() {
+        saidaPendente = false;
+        if (timeoutSaida) clearTimeout(timeoutSaida);
+        timeoutSaida = null;
+
         const cabecalho = document.createElement("div");
         cabecalho.style.cssText =
             "display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;";
         cabecalho.innerHTML =
             '<strong>Top Reacoes</strong>' +
-            '<button id="trp-fechar" style="background:none;border:none;color:#8b92a3;cursor:pointer;font-size:16px;">x</button>';
+            '<div style="display:flex;align-items:center;gap:12px;">' +
+            '<button id="trp-sair" style="display:none;background:none;border:none;color:#8b92a3;cursor:pointer;font-size:11px;padding:0;">sair</button>' +
+            '<button id="trp-fechar" style="background:none;border:none;color:#8b92a3;cursor:pointer;font-size:16px;">x</button>' +
+            "</div>";
         painel.appendChild(cabecalho);
         cabecalho.querySelector("#trp-fechar").addEventListener("click", alternarPainel);
+        cabecalho.querySelector("#trp-sair").addEventListener("click", aoClicarSair);
+    }
+
+    // So aparece quando tem sessao ativa (telaLogado chama isso). Fica
+    // escondido nas telas de credenciais/login, onde ainda nao tem o que sair.
+    function atualizarVisibilidadeSair(visivel) {
+        const botao = painel && painel.querySelector("#trp-sair");
+        if (botao) botao.style.display = visivel ? "inline" : "none";
+    }
+
+    // Primeiro clique so avisa ("confirmar?", em vermelho, por 3s); segundo
+    // clique dentro desse tempo e que de fato sai. Evita sair sem querer ao
+    // clicar perto do "x" de fechar o painel.
+    function aoClicarSair() {
+        const botao = painel.querySelector("#trp-sair");
+        if (!saidaPendente) {
+            saidaPendente = true;
+            botao.textContent = "confirmar?";
+            botao.style.color = "#ff6b6b";
+            timeoutSaida = setTimeout(() => {
+                saidaPendente = false;
+                botao.textContent = "sair";
+                botao.style.color = "#8b92a3";
+            }, 3000);
+            return;
+        }
+        clearTimeout(timeoutSaida);
+        saidaPendente = false;
+        executarSaida();
+    }
+
+    async function executarSaida() {
+        const botao = painel.querySelector("#trp-sair");
+        botao.disabled = true;
+        botao.textContent = "saindo...";
+        try {
+            await cliente.logOut();
+        } catch (erro) {
+            // se der erro no logOut remoto, ainda assim limpa localmente
+        }
+        cliente = null;
+        GM_setValue(CHAVE_SESSAO, "");
+        decidirTela();
     }
 
     function corpoDoPainel() {
@@ -169793,6 +169845,7 @@ store2/dist/store2.js:
     }
 
     function decidirTela() {
+        atualizarVisibilidadeSair(false);
         const apiId = GM_getValue(CHAVE_API_ID, "");
         const apiHash = GM_getValue(CHAVE_API_HASH, "");
         if (!apiId || !apiHash) {
@@ -169925,19 +169978,7 @@ store2/dist/store2.js:
             botaoEscanear.addEventListener("click", () => telaScanner());
             const botaoResultados = botaoAcao(corpo, "Ver top reacoes");
             botaoResultados.addEventListener("click", () => telaResultados());
-            const botaoSair = botaoAcao(corpo, "Sair (apagar sessao salva)");
-            botaoSair.style.background = "#3a2f2f";
-            botaoSair.addEventListener("click", async () => {
-                botaoSair.disabled = true;
-                try {
-                    await cliente.logOut();
-                } catch (erro) {
-                    // se der erro no logOut remoto, ainda assim limpa localmente
-                }
-                cliente = null;
-                GM_setValue(CHAVE_SESSAO, "");
-                decidirTela();
-            });
+            atualizarVisibilidadeSair(true);
         } catch (erro) {
             textoAviso(corpo, "Erro ao carregar a conta: " + (erro && erro.message ? erro.message : erro), "#ff6b6b");
         }
