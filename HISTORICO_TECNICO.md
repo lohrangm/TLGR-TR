@@ -1114,3 +1114,38 @@ Confirmado tambem (sem mudanca de codigo): essa limitacao e exclusiva de
 grupos" porque nunca prometeu nada alem do que ja esta salvo.
 
 Versao 2026.10.08.10.
+
+## v2026.10.08.11: aviso de grupo desatualizado na tela de scan
+
+Item que tinha ficado marcado como baixa prioridade voltou a fazer
+sentido depois de uma discussao sobre "Ver top reacoes" so enxergar o
+que ja foi escaneado: se um grupo nao e re-escaneado, mensagem nova (e
+sua reacao) simplesmente nao existe no banco local - nao tem "Mostrar
+mais" nem busca hibrida que resolva isso, porque nao e limite de
+exibicao, e ausencia de dado. Diferente da busca por palavra-chave (que
+tem busca hibrida porque da pra perguntar ao servidor algo pontual e
+barato), reacao nao tem equivalente: a unica fonte de verdade e
+percorrer o historico de mensagens, que e exatamente o que o scan ja
+faz. Ou seja, a correcao aqui nao e arquitetura de busca, e frequencia
+de scan.
+
+Implementado um aviso (nao automatico, so informativo) na tela de scan:
+`buscarUltimaMensagemPorChat()` aproveita a MESMA chamada `iterDialogs()`
+que ja era feita em outros lugares (carregarGruposParaSelecao,
+escanearTudo) - cada `dialog.message.id` ja vem de graca junto com a
+lista de dialogs, sem precisar abrir o historico de cada grupo so pra
+descobrir a ultima mensagem. Comparando esse id com o
+`lastScannedMessageId` salvo, a tabela "O que ja esta salvo" mostra um
+badge "⟳ tem mensagem nova" nos grupos que tem mensagem posterior ao
+ultimo scan.
+
+Cuidado de performance: essa chamada e feita UMA VEZ por abertura da
+tela de scan (telaScanner()), nao a cada vez que a tabela e redesenhada -
+`renderizarTabelaChats()` e chamada varias vezes durante um scan em
+andamento (a cada checkpoint, via `aoAtualizarChat`), e repetir um
+`iterDialogs()` completo a cada uma dessas chamadas seria caro e
+desnecessario. O mapa e calculado uma vez e reaproveitado em todas as
+chamadas da mesma abertura de tela; so recalcula no final de um scan
+(a tabela final precisa refletir o scan que acabou de rodar).
+
+Versao 2026.10.08.11.

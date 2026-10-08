@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.08.10
+// @version      2026.10.08.11
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -169484,7 +169484,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.08.10";
+window.TRP_VERSAO = "2026.10.08.11";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
@@ -170411,11 +170411,34 @@ window.TRP_VERSAO = "2026.10.08.10";
         return null;
     }
 
+    // Pega, numa unica passada por iterDialogs (a mesma chamada ja usada em
+    // carregarGruposParaSelecao/escanearTudo, sem custo extra de API por
+    // chat), o id da ultima mensagem de verdade que existe HOJE em cada
+    // grupo/canal - dialog.message.id, de graca junto com a lista de dialogs,
+    // sem precisar abrir o historico de cada um. Comparado com
+    // lastScannedMessageId (o que a gente salvou), da pra saber se um grupo
+    // tem mensagem nova que o scan ainda nao viu, sem escanear nada - so
+    // serve de aviso (badge "desatualizado"), nao substitui rodar o scan de
+    // verdade.
+    async function buscarUltimaMensagemPorChat() {
+        const mapa = new Map();
+        for await (const dialog of cliente.iterDialogs({})) {
+            if (!(dialog.isGroup || dialog.isChannel)) continue;
+            mapa.set(String(dialog.id), dialog.message ? dialog.message.id : null);
+        }
+        return mapa;
+    }
+
     // Mostra o que ja esta salvo por grupo: quantas mensagens com reacao,
     // quando foi o ultimo scan e se terminou de verdade (concluido) ou ficou
     // parcial (cancelado no meio). Sem isso o usuario fica as cegas sobre o
-    // que ja rodou.
-    async function renderizarTabelaChats(container, db) {
+    // que ja rodou. "ultimasMensagens" (opcional, vindo de
+    // buscarUltimaMensagemPorChat) acrescenta o aviso de "desatualizado" -
+    // calculado so uma vez por abertura da tela de scan (ver telaScanner()),
+    // nao a cada vez que essa funcao e chamada de novo (ela e chamada varias
+    // vezes durante um scan em andamento, repetir o iterDialogs a cada
+    // checkpoint seria caro e sem necessidade).
+    async function renderizarTabelaChats(container, db, ultimasMensagens) {
         const chats = await listarChats(db);
         chats.sort((a, b) => (a.chatTitle || "").localeCompare(b.chatTitle || ""));
         if (!chats.length) {
@@ -170432,6 +170455,11 @@ window.TRP_VERSAO = "2026.10.08.10";
                 : backfillPendente
                 ? '<span style="color:#e0a93a;">completando historico antigo</span>'
                 : '<span style="color:#5ec26a;">completo</span>';
+            const ultimoIdReal = ultimasMensagens ? ultimasMensagens.get(c.chatId) : undefined;
+            const desatualizado = ultimoIdReal != null && ultimoIdReal > (c.lastScannedMessageId || 0);
+            const avisoDesatualizado = desatualizado
+                ? ' <span style="color:#e0a93a;" title="Tem mensagem nova no grupo desde o ultimo scan - roda o scan de novo (e rapido, so busca o que e novo) pra essa mensagem entrar no calculo de reacoes.">⟳ tem mensagem nova</span>'
+                : "";
             linhas.push(
                 "<tr>" +
                     '<td style="padding:4px 6px;">' +
@@ -170442,6 +170470,7 @@ window.TRP_VERSAO = "2026.10.08.10";
                     "</td>" +
                     '<td style="padding:4px 6px;">' +
                     badge +
+                    avisoDesatualizado +
                     "</td>" +
                     '<td style="padding:4px 6px;color:#8b92a3;font-size:11px;">' +
                     escapeHtml(quando) +
@@ -170518,7 +170547,13 @@ window.TRP_VERSAO = "2026.10.08.10";
 
         const tabela = document.createElement("div");
         corpo.appendChild(tabela);
-        await renderizarTabelaChats(tabela, db);
+
+        // So uma passada por iterDialogs aqui, reaproveitada nos demais
+        // renderizarTabelaChats() desta mesma abertura de tela (inclusive os
+        // que disparam a cada checkpoint durante um scan em andamento) - ver
+        // comentario em cima de renderizarTabelaChats().
+        const ultimasMensagens = await buscarUltimaMensagemPorChat().catch(() => new Map());
+        await renderizarTabelaChats(tabela, db, ultimasMensagens);
 
         botaoIniciar.addEventListener("click", async () => {
             botaoIniciar.disabled = true;
@@ -170532,7 +170567,7 @@ window.TRP_VERSAO = "2026.10.08.10";
                         status.textContent = texto;
                     },
                     apenasChatId,
-                    () => renderizarTabelaChats(tabela, db)
+                    () => renderizarTabelaChats(tabela, db, ultimasMensagens)
                 );
                 status.textContent = cancelarScanSolicitado
                     ? "Scan interrompido - o que ja foi visto fica salvo, pode retomar depois."
@@ -170546,7 +170581,11 @@ window.TRP_VERSAO = "2026.10.08.10";
                 botaoIniciar.textContent = "Iniciar scan de novo";
                 botaoParar.style.display = "none";
                 selectGrupo.disabled = false;
-                await renderizarTabelaChats(tabela, db);
+                // Reconfere do zero (a lista anterior pode ter ficado velha -
+                // o proprio scan que acabou de rodar muda o que conta como
+                // "desatualizado").
+                const ultimasMensagensPosScan = await buscarUltimaMensagemPorChat().catch(() => new Map());
+                await renderizarTabelaChats(tabela, db, ultimasMensagensPosScan);
             }
         });
     }
