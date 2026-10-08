@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from "fs";
 // dia, comecando em 1) - BUMP AQUI a cada vez que gerar uma nova entrega,
 // pra quem esta testando saber se o Tampermonkey ja pegou a versao nova ou
 // ainda esta rodando uma antiga.
-const VERSAO = "2026.10.08.5";
+const VERSAO = "2026.10.08.6";
 
 // URL que o proprio Tampermonkey confere (sozinho, periodicamente, ou na
 // hora se voce pedir "Check for userscript updates" no Dashboard dele)

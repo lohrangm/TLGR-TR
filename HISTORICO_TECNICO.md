@@ -865,3 +865,58 @@ Fluxo de atualizacao daqui pra frente: editar `painel_logic.js` (ou o que
 for), `node montar_userscript.mjs`, commit + push - sem nenhuma importacao
 manual nem servidor local. O Tampermonkey confere sozinho direto no
 `raw.githubusercontent.com`.
+
+## v2026.10.08.6: scroll do "Mostrar mais", filtro de periodo e configuracao de grupos do scan
+
+Tres pedidos do usuario depois de testar a v2026.10.08.5 em produção.
+
+**"Mostrar mais" jogando pro topo da tela**: causa encontrada no DOM, nao
+no app em si - `executarBusca()`/`atualizarLista()` esvaziam a lista
+(`lista.innerHTML = "Carregando..."`) antes de buscar de novo. Como o
+painel inteiro e um unico container com `overflow:auto`, esvaziar a lista
+encolhe a altura do conteudo abaixo do scroll atual, e o navegador trava o
+`scrollTop` em 0 sozinho nesse instante - quando a lista cheia volta, o
+scroll nao volta pra onde estava. Conserto: no clique do botao "Mostrar
+mais" (so ali, nao no botao "Buscar" normal, onde ir pro topo faz
+sentido), guarda `painel.scrollTop` antes e restaura depois do
+`await executarBusca()`/`await atualizarLista()`. Corrigido nas duas telas
+que tem esse botao (Buscar mensagens e Ver top reacoes).
+
+**Filtro de periodo em "Buscar mensagens"**: dois campos `<input
+type="date">` (De/Ate), ambos opcionais. `buscarTexto()` ganhou os
+parametros `dataDe`/`dataAte`, comparados contra `dateUtc.slice(0,10)`
+(formato ISO, comparavel como string). A busca ao vivo no servidor
+continua salvando TUDO que acha de novo (auto-cura de buraco de scan
+independente do filtro de data escolhido na hora) - o filtro de data so
+afeta o que e EXIBIDO como "achado agora", nunca o que e salvo. Mirror em
+`test_indexeddb_logic.mjs` atualizado com os mesmos parametros e testes
+novos usando os 4 registros da arlene/lee ja existentes (filtra so o
+meio, so `dataDe` sem `dataAte`, etc.) - todos passando.
+
+**Configurar grupos do scan**: ate aqui, "Todos" no scan significava
+literalmente todo grupo/canal da conta, sem jeito de tirar um
+permanentemente (diferente da versao Python antiga, que tinha
+`grupos_para_escanear.txt`). Nova tela "Configurar grupos do scan
+(incluir/excluir)", acessivel pelo menu principal: lista todos os
+grupos/canais (mesma fonte que a tela de scan usa,
+`carregarGruposParaSelecao()`), um quadrado marcavel por grupo. So
+guarda a lista de EXCLUIDOS (`GM_setValue`/`trp_grupos_excluidos`, JSON de
+chatIds) - por desenho, assim grupo novo que a conta entrar aparece la
+automaticamente ja incluido, sem precisar marcar nada toda vez. Escolher
+um grupo especifico no dropdown da tela de scan ignora essa lista (sempre
+escaneia o que foi escolhido na hora, mesmo que esteja desmarcado na
+configuracao) - a exclusao so vale pro "Todos".
+
+Pendente, discutido mas NAO implementado (usuario marcou como baixa
+prioridade): deteccao automatica de "esse grupo tem mensagem nova desde o
+ultimo scan" comparando a data da ultima mensagem real do chat com
+`lastScannedAt`/`lastScannedMessageId` guardado. Hoje a unica forma de
+saber e rodar o scan de novo. Fica como ideia pra quando ele quiser.
+
+Tambem esclarecido (sem mudanca de codigo): a "Busca avancada
+(grupos/canais publicos)" usa `channels.SearchPosts`, busca server-side
+100% controlada pelo Telegram - mesma limitacao de tokenizacao por palavra
+inteira (sem match parcial) documentada pra busca nativa deles
+(bugs.telegram.org/c/724). Nao da pra tornar mais inteligente do nosso
+lado porque nao temos o texto bruto de canais publicos que a conta nao
+participa - so o que a API ja devolve filtrado.

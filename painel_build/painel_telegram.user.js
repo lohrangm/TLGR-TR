@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.08.5
+// @version      2026.10.08.6
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -169484,7 +169484,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.08.5";
+window.TRP_VERSAO = "2026.10.08.6";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
@@ -169511,6 +169511,22 @@ window.TRP_VERSAO = "2026.10.08.5";
     const CHAVE_API_ID = "trp_api_id";
     const CHAVE_API_HASH = "trp_api_hash";
     const CHAVE_SESSAO = "trp_session";
+    const CHAVE_GRUPOS_EXCLUIDOS = "trp_grupos_excluidos";
+
+    // So guarda a lista de EXCLUIDOS (nao a de incluidos) - assim, por
+    // padrao, tudo entra no scan "Todos", e grupo novo que a conta entrar
+    // ja aparece incluido sozinho, sem precisar marcar nada.
+    function carregarGruposExcluidos() {
+        try {
+            return new Set(JSON.parse(GM_getValue(CHAVE_GRUPOS_EXCLUIDOS, "[]")));
+        } catch (erro) {
+            return new Set();
+        }
+    }
+
+    function salvarGruposExcluidos(excluidos) {
+        GM_setValue(CHAVE_GRUPOS_EXCLUIDOS, JSON.stringify([...excluidos]));
+    }
 
     const NOME_BANCO = "TopReacoesTelegram";
     const VERSAO_BANCO = 1;
@@ -169684,7 +169700,7 @@ window.TRP_VERSAO = "2026.10.08.5";
     // paginacao (chamar nessa funcao de novo com "limite" maior) em vez de
     // so aumentar um limite fixo de uma vez: ela deixa o cursor avançar o
     // suficiente pra sair do primeiro grupo e alcançar os demais.
-    function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor }) {
+    function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor, dataDe, dataAte }) {
         return new Promise((resolve, reject) => {
             const palavras = normalizarTexto(termo)
                 .split(/\s+/)
@@ -169716,7 +169732,9 @@ window.TRP_VERSAO = "2026.10.08.5";
                 // sem isso, .some() num array vazio da false, entao isso ja
                 // seria seguro de qualquer jeito, mas deixa explicito.
                 const bateAlgumaPalavra = palavras.length > 0 && palavras.some((p) => textoNormalizado.includes(p));
-                if ((valor.reactionTotal || 0) >= minimoReacoes && bateAlgumaPalavra) {
+                const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
+                const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
+                if ((valor.reactionTotal || 0) >= minimoReacoes && bateAlgumaPalavra && bateData) {
                     resultados.push(valor);
                 }
                 cursor.continue();
@@ -170203,6 +170221,8 @@ window.TRP_VERSAO = "2026.10.08.5";
                 "</div>";
             const botaoEscanear = botaoAcao(corpo, "Escanear grupos/canais");
             botaoEscanear.addEventListener("click", () => telaScanner());
+            const botaoConfigurarGrupos = botaoAcao(corpo, "Configurar grupos do scan (incluir/excluir)");
+            botaoConfigurarGrupos.addEventListener("click", () => telaConfigurarGrupos());
             const botaoResultados = botaoAcao(corpo, "Ver top reacoes");
             botaoResultados.addEventListener("click", () => telaResultados());
             const botaoBusca = botaoAcao(corpo, "Buscar mensagens");
@@ -170240,6 +170260,54 @@ window.TRP_VERSAO = "2026.10.08.5";
         }
         grupos.sort((a, b) => a.titulo.localeCompare(b.titulo));
         return grupos;
+    }
+
+    // ---- Tela de configuracao: quais grupos/canais entram no "Todos" do scan ----
+
+    // Escanear um grupo especifico (escolhendo ele no dropdown da propria
+    // tela de scan) ignora essa lista de exclusao - ela so vale pra quando
+    // "Todos" esta selecionado ali.
+    async function telaConfigurarGrupos() {
+        const corpo = corpoDoPainel();
+        botaoVoltar(corpo);
+
+        const aviso = document.createElement("div");
+        aviso.style.cssText = "color:#8b92a3;margin-bottom:10px;";
+        aviso.textContent =
+            'Desmarca os grupos/canais que voce NAO quer que o scan com "Todos" selecionado inclua. Grupo novo que voce entrar aparece aqui automaticamente, ja marcado pra escanear. Escolher um grupo especifico na tela de scan ignora essa lista (sempre escaneia, mesmo desmarcado aqui).';
+        corpo.appendChild(aviso);
+
+        const lista = document.createElement("div");
+        lista.style.cssText = "color:#8b92a3;";
+        lista.textContent = "Carregando lista de grupos...";
+        corpo.appendChild(lista);
+
+        try {
+            const grupos = await carregarGruposParaSelecao();
+            const excluidos = carregarGruposExcluidos();
+            lista.innerHTML = "";
+            if (!grupos.length) {
+                lista.textContent = "Nenhum grupo/canal encontrado nessa conta.";
+                return;
+            }
+            for (const g of grupos) {
+                const linha = document.createElement("div");
+                linha.style.cssText =
+                    "display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid #2a2f3a;";
+                const quadrado = criarQuadradoMarcavel(!excluidos.has(g.chatId), (incluido) => {
+                    if (incluido) excluidos.delete(g.chatId);
+                    else excluidos.add(g.chatId);
+                    salvarGruposExcluidos(excluidos);
+                });
+                const rotulo = document.createElement("span");
+                rotulo.textContent = g.titulo;
+                linha.appendChild(quadrado.elemento);
+                linha.appendChild(rotulo);
+                lista.appendChild(linha);
+            }
+        } catch (erro) {
+            lista.textContent = "Erro ao carregar grupos: " + (erro && erro.message ? erro.message : erro);
+        }
     }
 
     // Acha o dialog.entity de um chat ja escaneado, pelo chatId guardado -
@@ -170339,7 +170407,7 @@ window.TRP_VERSAO = "2026.10.08.5";
         status.style.cssText = "color:#8b92a3;margin-bottom:10px;white-space:pre-line;";
         status.textContent = scanEmAndamento
             ? "Scan ja esta rodando..."
-            : 'Escolhe um grupo especifico ou deixa em "Todos". Continua de onde parou da ultima vez - pode parar e retomar a hora que quiser. Historico antigo que ainda nao tem texto completo salvo (grupos escaneados antes da busca por palavra-chave existir) e completado automaticamente, sem precisar marcar nada.';
+            : 'Escolhe um grupo especifico ou deixa em "Todos" (respeita o que estiver desmarcado em "Configurar grupos do scan", na tela anterior). Continua de onde parou da ultima vez - pode parar e retomar a hora que quiser. Historico antigo que ainda nao tem texto completo salvo (grupos escaneados antes da busca por palavra-chave existir) e completado automaticamente, sem precisar marcar nada.';
         corpo.appendChild(status);
 
         const botaoIniciar = botaoAcao(corpo, scanEmAndamento ? "Scan em andamento..." : "Iniciar scan");
@@ -170421,6 +170489,10 @@ window.TRP_VERSAO = "2026.10.08.5";
         scanEmAndamento = true;
         cancelarScanSolicitado = false;
         const db = await abrirBanco();
+        // So vale a exclusao quando "Todos" esta rodando - escolher um
+        // grupo especifico (apenasChatId) sempre escaneia ele, mesmo que
+        // esteja desmarcado em "Configurar grupos do scan".
+        const excluidos = apenasChatId ? null : carregarGruposExcluidos();
         try {
             for await (const dialog of cliente.iterDialogs({})) {
                 if (cancelarScanSolicitado) break;
@@ -170428,6 +170500,7 @@ window.TRP_VERSAO = "2026.10.08.5";
 
                 const chatId = String(dialog.id);
                 if (apenasChatId && chatId !== apenasChatId) continue;
+                if (excluidos && excluidos.has(chatId)) continue;
 
                 const chatTitle = dialog.title || dialog.name || chatId;
                 const chatUsername = (dialog.entity && dialog.entity.username) || null;
@@ -170664,9 +170737,15 @@ window.TRP_VERSAO = "2026.10.08.5";
 
             if (mensagens.length >= limiteAtual) {
                 const botaoMais = botaoAcao(lista, "Mostrar mais");
-                botaoMais.addEventListener("click", () => {
+                // Mesmo problema e mesmo conserto do "Mostrar mais" da tela
+                // de busca: a lista esvaziar por um instante durante o
+                // "Carregando..." faz o navegador zerar o scroll do painel
+                // sozinho, entao guarda e restaura na mao.
+                botaoMais.addEventListener("click", async () => {
+                    const scrollAnterior = painel.scrollTop;
                     limiteAtual += 50;
-                    atualizarLista();
+                    await atualizarLista();
+                    painel.scrollTop = scrollAnterior;
                 });
             }
         }
@@ -170719,6 +170798,21 @@ window.TRP_VERSAO = "2026.10.08.5";
             opcao.textContent = c.chatTitle || c.chatId;
             selectGrupo.appendChild(opcao);
         }
+
+        // Filtro por periodo - opcional, deixa os dois em branco pra nao
+        // filtrar por data nenhuma. Compara contra dateUtc (ISO), entao
+        // funciona so com o texto "AAAA-MM-DD" que o proprio <input
+        // type="date"> devolve.
+        const filtrosData = document.createElement("div");
+        filtrosData.style.cssText = "display:flex;gap:8px;margin-bottom:10px;";
+        filtrosData.innerHTML =
+            '<div style="flex:1;"><label style="display:block;color:#8b92a3;font-size:11px;margin-bottom:2px;">De (data)</label>' +
+            '<input id="trp-busca-data-de" type="date" style="width:100%;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;box-sizing:border-box;"></div>' +
+            '<div style="flex:1;"><label style="display:block;color:#8b92a3;font-size:11px;margin-bottom:2px;">Ate (data)</label>' +
+            '<input id="trp-busca-data-ate" type="date" style="width:100%;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;box-sizing:border-box;"></div>';
+        corpo.appendChild(filtrosData);
+        const inputDataDe = filtrosData.querySelector("#trp-busca-data-de");
+        const inputDataAte = filtrosData.querySelector("#trp-busca-data-ate");
 
         const campoBusca = campoTexto(corpo, "Palavra ou trecho a buscar", "text");
 
@@ -170851,7 +170945,17 @@ window.TRP_VERSAO = "2026.10.08.5";
             const chatId = selectGrupo.value || null;
             const minimo = parseInt(inputMinimo.value, 10) || 0;
             const ordenarPor = selectOrdenar.value;
-            const mensagens = await buscarTexto(db, { termo, chatId, minimo, limite: limiteAtual, ordenarPor });
+            const dataDe = inputDataDe.value || null;
+            const dataAte = inputDataAte.value || null;
+            const mensagens = await buscarTexto(db, {
+                termo,
+                chatId,
+                minimo,
+                limite: limiteAtual,
+                ordenarPor,
+                dataDe,
+                dataAte,
+            });
 
             let novasDoServidor = [];
             let erroServidor = null;
@@ -170859,13 +170963,20 @@ window.TRP_VERSAO = "2026.10.08.5";
                 try {
                     const chavesLocais = new Set(mensagens.map((m) => m.key));
                     const doServidor = await buscarAoVivoNoServidor(chatId, termo, minimo);
-                    novasDoServidor = doServidor
-                        .filter((m) => !chavesLocais.has(m.key))
-                        .map((m) => ({ ...m, achadoNoServidor: true }));
-                    for (const m of novasDoServidor) {
-                        const { achadoNoServidor, ...registro } = m;
-                        await salvarMensagem(db, registro);
+                    // Salva TODA mensagem que o servidor achou e a gente ainda
+                    // nao tinha - o filtro de data abaixo e so pra exibicao
+                    // nesta busca, nao deve impedir de consertar um buraco de
+                    // scan que esteja fora do periodo escolhido agora.
+                    const novasNoServidor = doServidor.filter((m) => !chavesLocais.has(m.key));
+                    for (const m of novasNoServidor) {
+                        await salvarMensagem(db, m);
                     }
+                    novasDoServidor = novasNoServidor
+                        .filter((m) => {
+                            const dataDaMensagem = (m.dateUtc || "").slice(0, 10);
+                            return (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
+                        })
+                        .map((m) => ({ ...m, achadoNoServidor: true }));
                 } catch (erro) {
                     erroServidor = erro && erro.message ? erro.message : String(erro);
                 }
@@ -170925,9 +171036,17 @@ window.TRP_VERSAO = "2026.10.08.5";
 
             if (mensagens.length >= limiteAtual) {
                 const botaoMais = botaoAcao(lista, "Mostrar mais");
-                botaoMais.addEventListener("click", () => {
+                // "Buscando..." esvazia a lista por um instante, encolhendo a
+                // altura do painel - como ele tem scroll proprio
+                // (overflow:auto), o navegador trava o scrollTop em 0
+                // sozinho nesse instante, e nao volta pra onde estava quando
+                // a lista cheia volta a aparecer. Guarda e restaura na mao
+                // pra nao jogar o usuario pro topo a cada "Mostrar mais".
+                botaoMais.addEventListener("click", async () => {
+                    const scrollAnterior = painel.scrollTop;
                     limiteAtual += 100;
-                    executarBusca();
+                    await executarBusca();
+                    painel.scrollTop = scrollAnterior;
                 });
             }
         }
@@ -170951,6 +171070,14 @@ window.TRP_VERSAO = "2026.10.08.5";
             if (campoBusca.value.trim()) executarBusca();
         });
         inputMinimo.addEventListener("change", () => {
+            limiteAtual = 100;
+            if (campoBusca.value.trim()) executarBusca();
+        });
+        inputDataDe.addEventListener("change", () => {
+            limiteAtual = 100;
+            if (campoBusca.value.trim()) executarBusca();
+        });
+        inputDataAte.addEventListener("change", () => {
             limiteAtual = 100;
             if (campoBusca.value.trim()) executarBusca();
         });

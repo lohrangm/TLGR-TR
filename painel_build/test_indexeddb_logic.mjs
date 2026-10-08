@@ -84,7 +84,7 @@ function normalizarTexto(texto) {
         .toLowerCase();
 }
 
-function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor }) {
+function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor, dataDe, dataAte }) {
     return new Promise((resolve, reject) => {
         const palavras = normalizarTexto(termo)
             .split(/\s+/)
@@ -113,7 +113,9 @@ function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor }) {
             const texto = valor.texto || valor.textPreview || "";
             const textoNormalizado = normalizarTexto(texto);
             const bateAlgumaPalavra = palavras.length > 0 && palavras.some((p) => textoNormalizado.includes(p));
-            if ((valor.reactionTotal || 0) >= minimoReacoes && bateAlgumaPalavra) {
+            const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
+            const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
+            if ((valor.reactionTotal || 0) >= minimoReacoes && bateAlgumaPalavra && bateData) {
                 resultados.push(valor);
             }
             cursor.continue();
@@ -330,6 +332,28 @@ assert(
     "'arlene lee' NAO acha mensagem sem nenhuma das duas palavras"
 );
 assert(duasPalavras.length === 3, "'arlene lee' traz as 3 mensagens que tem pelo menos uma das palavras (veio " + duasPalavras.length + ")");
+
+// ---- buscarTexto: filtro de periodo (dataDe/dataAte) ----
+// Mesmas 4 mensagens (A:6 a A:9, datas 01-08 a 01-11) - filtra so o meio.
+const comPeriodo = await buscarTexto(db, {
+    termo: "arlene lee",
+    chatId: "A",
+    limite: 10,
+    dataDe: "2026-01-09",
+    dataAte: "2026-01-10",
+});
+assert(
+    !comPeriodo.some((m) => m.messageId === 6),
+    "dataDe=01-09 exclui a mensagem de 01-08 (antes do periodo)"
+);
+assert(comPeriodo.some((m) => m.messageId === 7), "periodo 01-09 a 01-10 inclui a mensagem de 01-09");
+assert(comPeriodo.some((m) => m.messageId === 8), "periodo 01-09 a 01-10 inclui a mensagem de 01-10");
+assert(comPeriodo.length === 2, "filtro de periodo traz so as 2 mensagens dentro da janela (veio " + comPeriodo.length + ")");
+const soDataDe = await buscarTexto(db, { termo: "arlene lee", chatId: "A", limite: 10, dataDe: "2026-01-10" });
+assert(
+    soDataDe.length === 1 && soDataDe[0].messageId === 8,
+    "so dataDe (sem dataAte) traz so quem bate no termo a partir dali em diante (veio " + soDataDe.length + ")"
+);
 
 // ---- idBaseDoChatId (copiada de painel_logic.js) ----
 // O link que abre a MENSAGEM EXATA (visto no codigo-fonte do Telegram Web,
