@@ -1226,4 +1226,43 @@ ser mais lento que a busca normal:
 
 Versao 2026.10.08.12.
 
-Versao 2026.10.08.11.
+## v2026.10.08.13: seletor de ordenacao de "Ver top reacoes" sumia (clipado) com grupo de nome longo
+
+Usuario reportou que, mesmo na v12, o seletor "Mais reacoes/Mais
+recentes" novo em "Ver top reacoes" nao aparecia - so o combo de grupo
+("Todos os grupos") ficava visivel, ocupando a linha inteira, sem
+seletor de ordenacao nem campo de minimo de reacoes ao lado. Nenhum
+erro no console (confirmado tambem que a versao rodando batia
+linha-a-linha com o build gerado, entao nao era cache de Tampermonkey
+desatualizado).
+
+Causa raiz: flexbox tem uma regra pouco conhecida - um item flex com
+`flex-basis:0%` (o que `flex:2`/`flex:1` definem) ainda tem, por
+padrao, um "automatic minimum size" baseado no conteudo (min-width:auto
+implicito), que funciona como um piso mesmo com flex-shrink ativo. O
+`<select>` de grupo tem opcoes com titulo de chat + "(ate msg NNNNN)",
+e alguns titulos sao bem compridos (ex. "𝕺𝖗𝖋ã𝖔𝖘 𝕯𝖔 𝕰𝖝𝖈𝖑𝖚𝖘𝖎𝖛𝖔 (ate msg
+1085413)") - o navegador (Firefox, no caso do usuario) calcula o
+minimo intrinseco do select considerando o texto das opcoes, nao so a
+selecionada. Esse minimo sozinho ja passava da largura disponivel do
+painel (420px menos padding), entao o select de grupo tomava a linha
+inteira e os outros dois itens (seletor de ordenacao, campo de minimo)
+eram empurrados pra fora - sem gerar barra de rolagem horizontal
+porque `areaRolavel` tem `overflow-x:hidden` (ver v2026.10.08.9), que
+simplesmente corta o que nao cabe em vez de mostrar.
+
+Esse mesmo padrao de linha (select de grupo flex:2 + select de
+ordenacao flex:1 + input de minimo largura fixa) existe tanto em "Ver
+top reacoes" quanto em "Buscar mensagens" - corrigido nos dois lugares
+mesmo sem reclamacao especifica da segunda tela, ja que e o mesmo bug
+latente.
+
+Correcao: `min-width:0` explicito nos dois `<select>` de cada linha
+(sobrepoe o automatic minimum size, deixando o flex-basis/grow/shrink
+mandar de verdade) e `flex-shrink:0` no input de minimo (largura fixa
+de 56px nao deve ser espremida). Efeito colateral aceito: com
+`min-width:0`, o texto de uma opcao de grupo muito comprida pode ficar
+cortado dentro do proprio select quando selecionada - troca aceitavel
+por garantir que os outros filtros sempre apareçam.
+
+Versao 2026.10.08.13.

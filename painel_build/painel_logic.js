@@ -1395,14 +1395,14 @@
         const filtros = document.createElement("div");
         filtros.style.cssText = "display:flex;gap:8px;margin-bottom:10px;";
         filtros.innerHTML =
-            '<select id="trp-filtro-grupo" style="flex:2;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
+            '<select id="trp-filtro-grupo" style="flex:2;min-width:0;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
             '<option value="">Todos os grupos</option>' +
             "</select>" +
-            '<select id="trp-filtro-ordenar" style="flex:1;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
+            '<select id="trp-filtro-ordenar" style="flex:1;min-width:0;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
             '<option value="reacoes">Mais reacoes</option>' +
             '<option value="data">Mais recentes</option>' +
             "</select>" +
-            '<input id="trp-filtro-minimo" type="number" min="1" value="1" style="width:56px;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">';
+            '<input id="trp-filtro-minimo" type="number" min="1" value="1" style="width:56px;flex-shrink:0;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">';
         corpo.appendChild(filtros);
 
         const selectGrupo = filtros.querySelector("#trp-filtro-grupo");
@@ -1578,14 +1578,14 @@
         const filtros = document.createElement("div");
         filtros.style.cssText = "display:flex;gap:8px;margin-bottom:10px;";
         filtros.innerHTML =
-            '<select id="trp-busca-grupo" style="flex:2;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
+            '<select id="trp-busca-grupo" style="flex:2;min-width:0;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
             '<option value="">Todos os grupos</option>' +
             "</select>" +
-            '<select id="trp-busca-ordenar" style="flex:1;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
+            '<select id="trp-busca-ordenar" style="flex:1;min-width:0;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
             '<option value="data">Mais recentes</option>' +
             '<option value="reacoes">Mais reacoes</option>' +
             "</select>" +
-            '<input id="trp-busca-minimo" type="number" min="0" value="0" title="Minimo de reacoes" style="width:56px;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">';
+            '<input id="trp-busca-minimo" type="number" min="0" value="0" title="Minimo de reacoes" style="width:56px;flex-shrink:0;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">';
         corpo.appendChild(filtros);
         const selectGrupo = filtros.querySelector("#trp-busca-grupo");
         const selectOrdenar = filtros.querySelector("#trp-busca-ordenar");
