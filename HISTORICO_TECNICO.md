@@ -795,3 +795,42 @@ sozinho. Depois dessa vez, o fluxo normal vira: liga o `.bat`, abre o
 Tampermonkey Dashboard, pede "Check for userscript updates" no script
 "Telegram Top Reacoes - Painel", confirma a atualizacao se aparecer, e so
 ai da F5 no Telegram Web.
+
+## Preparacao pra publicar no GitHub (conta pessoal do usuario)
+
+Usuario confirmou que tem GitHub e quer usar a conta pessoal dele -
+decisao explicita dele: ou ele mesmo cria+sobe o repositorio, ou pede pra
+aba do Claude pessoal dele fazer isso. Esta sessao (contexto
+INFLEET/trabalho) NAO cria nem faz push do repositorio - so deixa tudo
+pronto.
+
+Verificacoes feitas antes de recomendar repo publico:
+- `git remote -v` → vazio, nenhum remote configurado ainda.
+- `.gitignore` ja exclui `.env`, `data/*.session`, `data/*.session-journal`,
+  `data/*.db`, `grupos_para_escanear.txt` - nada sensivel versionado.
+- `git status` limpo (so o `commit_message.txt` de rotina, nao rastreado).
+- Encontrado um `painel_telegram.user.js` **duplicado na raiz** do
+  projeto (fora de `painel_build/`) - `findstr /C:"@version"` nao achou
+  nada nele, confirmando que e um arquivo antigo, de antes da convencao de
+  versionamento, nunca tocado pelo pipeline de build (`montar_userscript.mjs`
+  so escreve em `painel_build/painel_telegram.user.js`). Removido via
+  `git rm` (fica preservado no historico do git, so sai da arvore atual).
+
+Resposta tecnica pra pergunta do usuario ("so iria pro git se me poupar
+de rodar o .bat toda vez, e se for melhor tecnicamente"): repo **publico**
+no GitHub resolve os dois lados - `raw.githubusercontent.com` fica sempre
+no ar (ao contrario de `localhost:8787`, que so responde com o `.bat`
+aberto), entao o `@updateURL` passa a funcionar sem nada rodando na
+maquina do usuario. Repo **privado** nao serve pra isso: a checagem do
+Tampermonkey e uma requisicao HTTP sem autenticacao, e o raw de repo
+privado exige token - sem token, o Tampermonkey so falha a checagem em
+silencio.
+
+`README.md` ganhou a secao "Publicar no GitHub" com os comandos exatos
+(`gh repo create ... --public --source=. --remote=origin --push`, e a
+alternativa manual com `git remote add` + `git push`). Depois que o repo
+existir, falta so: atualizar `URL_ATUALIZACAO` em `montar_userscript.mjs`
+pra `https://raw.githubusercontent.com/<usuario>/<repo>/<branch>/painel_build/painel_telegram.user.js`,
+rodar `node montar_userscript.mjs` de novo, e importar manualmente **mais
+essa uma ultima vez** - da em diante o Tampermonkey confere sozinho
+direto no GitHub, sem `.bat` nenhum.

@@ -50,14 +50,33 @@ Isso ainda e so a parte de login (fase 1). A tela de top reacoes dentro do paine
 Setup (uma vez so):
 
 1. Instale a extensao Tampermonkey no seu navegador (https://www.tampermonkey.net).
-2. Abra o arquivo painel_telegram.user.js (ele e grande, mais de 8 MB, porque leva embutido o cliente inteiro do Telegram - isso e esperado, nao precisa editar nada nele).
-3. No Tampermonkey, clique em "Criar novo script", apague o conteudo padrao, cole todo o conteudo do arquivo, salve (Ctrl+S).
-4. Abra ou atualize o web.telegram.org - aparece um botao flutuante "Top Reacoes" no canto da tela.
-5. Clique nele. Na primeira vez, vai pedir api_id e api_hash (pegue em https://my.telegram.org/apps, so precisa fazer isso uma vez - fica salvo no proprio navegador).
-6. Depois disso, pede seu numero de telefone, o codigo de login (chega no proprio Telegram ou por SMS) e, se voce tiver verificacao em duas etapas, a senha - tudo em caixas de texto dentro do proprio painel.
-7. Uma vez logado, a sessao fica salva no Tampermonkey - reabrir o painel depois nao pede login de novo. Tem um botao "Sair" pra apagar a sessao salva, se precisar trocar de conta.
+2. Tampermonkey → Dashboard → aba "Utilitarios" → "Importar do arquivo" → escolhe `painel_build/painel_telegram.user.js`. **Nao** abra o arquivo no Bloco de Notas e cole o conteudo no editor do Tampermonkey - o arquivo passa de 8 MB de texto, e colar isso numa caixa de texto de extensao de navegador trava, corta ou mistura com o conteudo antigo sem avisar erro nenhum (ja aconteceu, ver HISTORICO_TECNICO.md).
+3. Abra ou atualize o web.telegram.org - aparece um botao flutuante "Top Reacoes" no canto da tela.
+4. Clique nele. Na primeira vez, vai pedir api_id e api_hash (pegue em https://my.telegram.org/apps, so precisa fazer isso uma vez - fica salvo no proprio navegador).
+5. Depois disso, pede seu numero de telefone, o codigo de login (chega no proprio Telegram ou por SMS) e, se voce tiver verificacao em duas etapas, a senha - tudo em caixas de texto dentro do proprio painel.
+6. Uma vez logado, a sessao fica salva no Tampermonkey - reabrir o painel depois nao pede login de novo. Tem um botao "Sair" pra apagar a sessao salva, se precisar trocar de conta.
 
-Detalhe tecnico, caso de erro: o arquivo painel_telegram.user.js e gerado (nao e pra editar na mao) a partir dos arquivos em painel_build/ (entry.js, painel_logic.js, build.mjs). Pra gerar de novo depois de alguma mudanca: `cd painel_build && npm install && npm run build`.
+O numero de versao instalado aparece no topo do proprio painel (do lado de "Top Reacoes") e tambem no Dashboard do Tampermonkey, ao lado do nome do script - compare com a versao mais recente entregue pra saber se a atualizacao realmente pegou.
+
+**Atualizar depois da primeira vez**: o script ja vem com `@updateURL`/`@downloadURL` no cabecalho, entao o Tampermonkey consegue checar sozinho se tem versao nova (Dashboard → no script → "Check for userscript updates"). Enquanto o repositorio nao esta publicado (ver "Publicar no GitHub" abaixo), isso exige rodar `iniciar_servidor_userscript.bat` (na raiz do projeto) antes de pedir a checagem. Depois de publicado no GitHub, isso deixa de ser necessario.
+
+Detalhe tecnico, caso de erro: o arquivo painel_telegram.user.js e gerado (nao e pra editar na mao) a partir dos arquivos em painel_build/ (entry.js, painel_logic.js, build.mjs, montar_userscript.mjs). Pra gerar de novo depois de alguma mudanca: `cd painel_build && node build.mjs && node montar_userscript.mjs` (so precisa do `build.mjs` se `entry.js` ou as dependencias do teleproto mudarem).
+
+### Publicar no GitHub (opcional, elimina o `iniciar_servidor_userscript.bat`)
+
+Sem repositorio remoto, o `@updateURL` aponta pra um servidor local (precisa do `.bat` rodando no momento da checagem). Publicando num repositorio **publico** no GitHub, a URL passa a ser `https://raw.githubusercontent.com/<usuario>/<repo>/<branch>/painel_build/painel_telegram.user.js` - sempre disponivel, sem precisar de nada rodando no seu PC. Repo **privado** nao funciona bem aqui: a checagem do Tampermonkey e uma requisicao sem autenticacao, e `raw.githubusercontent.com` de repo privado exige token. Nada sensivel esta versionado (.env, sessao e banco ja ficam de fora pelo .gitignore), entao repo publico so expoe o codigo.
+
+Passos (rodar numa conta com permissao pra criar repositorio nessa conta do GitHub):
+
+    cd C:\Projetos\PROJETOS_MAESTRO\TELEGRAM_TOP_REACOES
+    gh repo create <seu-usuario>/telegram-top-reacoes --public --source=. --remote=origin --push
+
+Sem `gh` autenticado: cria o repositorio pelo site do GitHub (vazio, sem README) e depois:
+
+    git remote add origin https://github.com/<seu-usuario>/telegram-top-reacoes.git
+    git push -u origin master
+
+Depois disso, atualiza `URL_ATUALIZACAO` em `painel_build/montar_userscript.mjs` pra essa URL raw, roda `node montar_userscript.mjs`, importa essa versao **uma ultima vez** via "Importar do arquivo" (nao copia/cola) - da em diante o Tampermonkey confere sozinho direto no GitHub.
 
 ## Escolher quais grupos/canais entram no scan
 
