@@ -834,3 +834,34 @@ pra `https://raw.githubusercontent.com/<usuario>/<repo>/<branch>/painel_build/pa
 rodar `node montar_userscript.mjs` de novo, e importar manualmente **mais
 essa uma ultima vez** - da em diante o Tampermonkey confere sozinho
 direto no GitHub, sem `.bat` nenhum.
+
+## Publicado no GitHub: github.com/lohrangm/TLGR-TR
+
+Repositorio criado pelo usuario (publico, vazio) e o push inicial feito
+direto desta sessao via `windows-cli`, sem precisar do `gh` nem da sessao
+pessoal do Claude do usuario.
+
+Detalhe encontrado no processo: havia uma credencial git antiga pro
+GitHub salva no Gerenciador de Credenciais do Windows, sob o usuario
+**lohranmagno** - mas o repositorio criado e o GitHub pessoal do usuario
+sao sob o usuario **lohrangm** (bate com o e-mail pessoal dele,
+lohrangm@gmail.com). Primeira tentativa de push falhou com 403
+("Permission to lohrangm/TLGR-TR.git denied to lohranmagno") exatamente
+por essa divergencia de contas. Resolvido apagando a credencial antiga
+(`cmdkey /delete:LegacyGeneric:target=git:https://github.com`) e tentando
+o push de novo - dessa vez o Windows/Git Credential Manager autenticou
+corretamente (sem precisar de nenhuma acao manual visivel do usuario) e o
+push foi confirmado via `git ls-remote origin` batendo com o commit local.
+
+Depois do push: `URL_ATUALIZACAO` em `montar_userscript.mjs` atualizada
+pra `https://raw.githubusercontent.com/lohrangm/TLGR-TR/master/painel_build/painel_telegram.user.js`,
+versao bumped pra `2026.10.08.5`, `.user.js` regerado. `iniciar_servidor_userscript.bat`
+removido do repositorio (fica preservado no historico do git) - deixou de
+fazer sentido existir, ja que o servidor local que ele subia nao e mais o
+que o `@updateURL` consulta. README.md atualizado pra refletir o fluxo
+atual (sem mencionar mais o `.bat`).
+
+Fluxo de atualizacao daqui pra frente: editar `painel_logic.js` (ou o que
+for), `node montar_userscript.mjs`, commit + push - sem nenhuma importacao
+manual nem servidor local. O Tampermonkey confere sozinho direto no
+`raw.githubusercontent.com`.

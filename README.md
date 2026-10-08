@@ -58,25 +58,15 @@ Setup (uma vez so):
 
 O numero de versao instalado aparece no topo do proprio painel (do lado de "Top Reacoes") e tambem no Dashboard do Tampermonkey, ao lado do nome do script - compare com a versao mais recente entregue pra saber se a atualizacao realmente pegou.
 
-**Atualizar depois da primeira vez**: o script ja vem com `@updateURL`/`@downloadURL` no cabecalho, entao o Tampermonkey consegue checar sozinho se tem versao nova (Dashboard → no script → "Check for userscript updates"). Enquanto o repositorio nao esta publicado (ver "Publicar no GitHub" abaixo), isso exige rodar `iniciar_servidor_userscript.bat` (na raiz do projeto) antes de pedir a checagem. Depois de publicado no GitHub, isso deixa de ser necessario.
+**Atualizar depois da primeira vez**: o script ja vem com `@updateURL`/`@downloadURL` no cabecalho, apontando pro repositorio publico no GitHub (`github.com/lohrangm/TLGR-TR`). O Tampermonkey confere sozinho se tem versao nova - Dashboard → no script "Telegram Top Reacoes - Painel" → "Check for userscript updates". Nao precisa de nada rodando na sua maquina pra isso funcionar.
 
 Detalhe tecnico, caso de erro: o arquivo painel_telegram.user.js e gerado (nao e pra editar na mao) a partir dos arquivos em painel_build/ (entry.js, painel_logic.js, build.mjs, montar_userscript.mjs). Pra gerar de novo depois de alguma mudanca: `cd painel_build && node build.mjs && node montar_userscript.mjs` (so precisa do `build.mjs` se `entry.js` ou as dependencias do teleproto mudarem).
 
-### Publicar no GitHub (opcional, elimina o `iniciar_servidor_userscript.bat`)
+### Publicado no GitHub
 
-Sem repositorio remoto, o `@updateURL` aponta pra um servidor local (precisa do `.bat` rodando no momento da checagem). Publicando num repositorio **publico** no GitHub, a URL passa a ser `https://raw.githubusercontent.com/<usuario>/<repo>/<branch>/painel_build/painel_telegram.user.js` - sempre disponivel, sem precisar de nada rodando no seu PC. Repo **privado** nao funciona bem aqui: a checagem do Tampermonkey e uma requisicao sem autenticacao, e `raw.githubusercontent.com` de repo privado exige token. Nada sensivel esta versionado (.env, sessao e banco ja ficam de fora pelo .gitignore), entao repo publico so expoe o codigo.
+O repositorio e publico: `github.com/lohrangm/TLGR-TR`. Nada sensivel esta versionado (.env, sessao e banco ja ficam de fora pelo .gitignore) - repo publico so expoe o codigo. Repo **privado** nao funcionaria aqui: a checagem do Tampermonkey e uma requisicao sem autenticacao, e `raw.githubusercontent.com` de repo privado exige token.
 
-Passos (rodar numa conta com permissao pra criar repositorio nessa conta do GitHub):
-
-    cd C:\Projetos\PROJETOS_MAESTRO\TELEGRAM_TOP_REACOES
-    gh repo create <seu-usuario>/telegram-top-reacoes --public --source=. --remote=origin --push
-
-Sem `gh` autenticado: cria o repositorio pelo site do GitHub (vazio, sem README) e depois:
-
-    git remote add origin https://github.com/<seu-usuario>/telegram-top-reacoes.git
-    git push -u origin master
-
-Depois disso, atualiza `URL_ATUALIZACAO` em `painel_build/montar_userscript.mjs` pra essa URL raw, roda `node montar_userscript.mjs`, importa essa versao **uma ultima vez** via "Importar do arquivo" (nao copia/cola) - da em diante o Tampermonkey confere sozinho direto no GitHub.
+`@updateURL`/`@downloadURL` apontam pra `https://raw.githubusercontent.com/lohrangm/TLGR-TR/master/painel_build/painel_telegram.user.js`. Toda atualizacao futura: editar, `node montar_userscript.mjs` (regenera o `.user.js` com a versao nova), commit + push - o Tampermonkey pega sozinho na proxima checagem, sem precisar trazer arquivo nenhum manualmente.
 
 ## Escolher quais grupos/canais entram no scan
 

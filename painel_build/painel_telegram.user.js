@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.08.4
+// @version      2026.10.08.5
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @run-at       document-idle
-// @updateURL    http://localhost:8787/painel_telegram.user.js
-// @downloadURL  http://localhost:8787/painel_telegram.user.js
+// @updateURL    https://raw.githubusercontent.com/lohrangm/TLGR-TR/master/painel_build/painel_telegram.user.js
+// @downloadURL  https://raw.githubusercontent.com/lohrangm/TLGR-TR/master/painel_build/painel_telegram.user.js
 // ==/UserScript==
 
 // Arquivo gerado automaticamente por montar_userscript.mjs - nao editar
@@ -169484,7 +169484,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.08.4";
+window.TRP_VERSAO = "2026.10.08.5";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 

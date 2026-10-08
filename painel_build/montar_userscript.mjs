@@ -15,16 +15,14 @@ import { readFileSync, writeFileSync } from "fs";
 // dia, comecando em 1) - BUMP AQUI a cada vez que gerar uma nova entrega,
 // pra quem esta testando saber se o Tampermonkey ja pegou a versao nova ou
 // ainda esta rodando uma antiga.
-const VERSAO = "2026.10.08.4";
+const VERSAO = "2026.10.08.5";
 
 // URL que o proprio Tampermonkey confere (sozinho, periodicamente, ou na
 // hora se voce pedir "Check for userscript updates" no Dashboard dele)
-// pra saber se tem versao nova - pra isso funcionar, o
-// iniciar_servidor_userscript.bat (na raiz do projeto) precisa estar
-// rodando, servindo esta mesma pasta em localhost. Sem o .bat rodando, o
-// Tampermonkey so falha a checagem em silencio (sem erro pro usuario) -
-// nao trava nada, so nao acha a versao nova ate o .bat ser ligado de novo.
-const URL_ATUALIZACAO = "http://localhost:8787/painel_telegram.user.js";
+// pra saber se tem versao nova. Agora aponta pro raw do repositorio no
+// GitHub (publico) - sempre no ar, nao depende de nada rodando na sua
+// maquina (o iniciar_servidor_userscript.bat deixou de ser necessario).
+const URL_ATUALIZACAO = "https://raw.githubusercontent.com/lohrangm/TLGR-TR/master/painel_build/painel_telegram.user.js";
 
 const CABECALHO = `// ==UserScript==
 // @name         Telegram Top Reacoes - Painel
