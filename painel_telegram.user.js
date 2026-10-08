@@ -170253,6 +170253,13 @@ store2/dist/store2.js:
 
                 const chatSalvo = await buscarChat(db, chatId);
                 const ultimoId = reescanearDoZero ? 0 : (chatSalvo && chatSalvo.lastScannedMessageId) || 0;
+                console.log("[Top Reacoes] scan:", {
+                    chatTitle,
+                    chatId,
+                    reescanearDoZero,
+                    lastScannedMessageIdSalvo: chatSalvo && chatSalvo.lastScannedMessageId,
+                    ultimoId,
+                });
 
                 atualizarStatus(`Escaneando: ${chatTitle} (a partir da mensagem ${ultimoId})...`);
 
