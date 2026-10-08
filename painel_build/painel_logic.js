@@ -124,6 +124,39 @@
         });
     }
 
+    // Busca por substring (acentuacao/caixa ignoradas) no texto completo das
+    // mensagens ja escaneadas - existe porque a busca nativa do Telegram e
+    // por palavra inteira, as vezes nao acha mensagem que claramente existe
+    // (ver HISTORICO_TECNICO.md). So enxerga o que ja foi salvo localmente.
+    function buscarTexto(db, { termo, chatId, limite }) {
+        return new Promise((resolve, reject) => {
+            const termoNormalizado = normalizarTexto(termo);
+            const resultados = [];
+            let visitados = 0;
+            const LIMITE_VISITAS = 300000; // trava de seguranca, evita travar o navegador
+
+            const loja = transacao(db, "mensagens", "readonly");
+            const pedido = chatId ? loja.index("por_chat").openCursor(IDBKeyRange.only(chatId)) : loja.openCursor();
+
+            pedido.onsuccess = () => {
+                const cursor = pedido.result;
+                if (!cursor || resultados.length >= limite || visitados >= LIMITE_VISITAS) {
+                    resultados.sort((a, b) => (a.dateUtc < b.dateUtc ? 1 : -1));
+                    resolve(resultados.slice(0, limite));
+                    return;
+                }
+                visitados++;
+                const valor = cursor.value;
+                const texto = valor.texto || valor.textPreview || "";
+                if (normalizarTexto(texto).includes(termoNormalizado)) {
+                    resultados.push(valor);
+                }
+                cursor.continue();
+            };
+            pedido.onerror = () => reject(pedido.error);
+        });
+    }
+
     // ---- Extracao de dados da mensagem/dialogo, espelhando o scan.py ----
 
     function extrairReacoes(mensagem) {
@@ -139,11 +172,27 @@
         return { reactions, total };
     }
 
-    function textoPreview(mensagem) {
-        let texto = (mensagem.message || "").trim().replace(/\s+/g, " ");
-        if (!texto) texto = "[midia ou mensagem sem texto]";
-        if (texto.length > 120) texto = texto.slice(0, 120) + "...";
-        return texto;
+    // Texto completo da mensagem, sem truncar - e o que a busca por palavra-
+    // chave usa. truncar() abaixo e so pra exibicao nas listas.
+    function textoCompleto(mensagem) {
+        const texto = (mensagem.message || "").trim().replace(/\s+/g, " ");
+        return texto || "[midia ou mensagem sem texto]";
+    }
+
+    function truncar(texto, tamanho) {
+        if (!texto) return "";
+        return texto.length > tamanho ? texto.slice(0, tamanho) + "..." : texto;
+    }
+
+    // Tira acentuacao e caixa, pra "informacao" encontrar "informação" (ou
+    // "INFORMAÇÃO"). A busca nativa do Telegram e por palavra inteira, nao
+    // por pedaco de palavra - essa normalizacao + o .includes() em
+    // buscarTexto() cobrem exatamente esse buraco.
+    function normalizarTexto(texto) {
+        return (texto || "")
+            .normalize("NFD")
+            .replace(/[̀-ͯ]/g, "")
+            .toLowerCase();
     }
 
     function dataIso(mensagem) {
@@ -493,6 +542,8 @@
             botaoEscanear.addEventListener("click", () => telaScanner());
             const botaoResultados = botaoAcao(corpo, "Ver top reacoes");
             botaoResultados.addEventListener("click", () => telaResultados());
+            const botaoBusca = botaoAcao(corpo, "Buscar mensagens");
+            botaoBusca.addEventListener("click", () => telaBusca());
             atualizarVisibilidadeSair(true);
         } catch (erro) {
             textoAviso(corpo, "Erro ao carregar a conta: " + (erro && erro.message ? erro.message : erro), "#ff6b6b");
@@ -586,6 +637,20 @@
         corpo.appendChild(blocoSelecao);
         const selectGrupo = blocoSelecao.querySelector("#trp-select-grupo");
 
+        const blocoReescanear = document.createElement("div");
+        blocoReescanear.style.cssText = "margin-bottom:10px;display:none;color:#8b92a3;font-size:12px;";
+        blocoReescanear.innerHTML =
+            '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">' +
+            '<input type="checkbox" id="trp-reescanear-zero"> ' +
+            "Reescanear esse grupo do zero (pega o texto completo de mensagens antigas que ainda nao foram salvas, util pra busca)" +
+            "</label>";
+        corpo.appendChild(blocoReescanear);
+        const checkboxReescanear = blocoReescanear.querySelector("#trp-reescanear-zero");
+        selectGrupo.addEventListener("change", () => {
+            blocoReescanear.style.display = selectGrupo.value ? "block" : "none";
+            if (!selectGrupo.value) checkboxReescanear.checked = false;
+        });
+
         carregarGruposParaSelecao()
             .then((grupos) => {
                 const carregando = selectGrupo.querySelector("#trp-carregando-grupos");
@@ -636,13 +701,16 @@
             botaoParar.style.display = "block";
             selectGrupo.disabled = true;
             const apenasChatId = selectGrupo.value || null;
+            const reescanearDoZero = apenasChatId ? checkboxReescanear.checked : false;
+            checkboxReescanear.disabled = true;
             try {
                 await escanearTudo(
                     (texto) => {
                         status.textContent = texto;
                     },
                     apenasChatId,
-                    () => renderizarTabelaChats(tabela, db)
+                    () => renderizarTabelaChats(tabela, db),
+                    reescanearDoZero
                 );
                 status.textContent = cancelarScanSolicitado
                     ? "Scan interrompido - o que ja foi visto fica salvo, pode retomar depois."
@@ -656,6 +724,8 @@
                 botaoIniciar.textContent = "Iniciar scan de novo";
                 botaoParar.style.display = "none";
                 selectGrupo.disabled = false;
+                checkboxReescanear.disabled = false;
+                checkboxReescanear.checked = false;
                 await renderizarTabelaChats(tabela, db);
             }
         });
@@ -666,7 +736,11 @@
     // iterDialogs() devolve.
     // aoAtualizarChat: callback opcional chamado toda vez que um chat e
     // salvo (checkpoint ou fim), pra tela de scan atualizar a tabela ao vivo.
-    async function escanearTudo(atualizarStatus, apenasChatId, aoAtualizarChat) {
+    // reescanearDoZero: ignora o lastScannedMessageId salvo e comeca do
+    // zero nesse chat - usado pra backfill de texto completo em grupos que
+    // ja foram escaneados antes da busca por palavra-chave existir (so a
+    // mensagem com reacao era salva, o resto era descartado).
+    async function escanearTudo(atualizarStatus, apenasChatId, aoAtualizarChat, reescanearDoZero) {
         if (scanEmAndamento) return;
         scanEmAndamento = true;
         cancelarScanSolicitado = false;
@@ -683,7 +757,7 @@
                 const chatUsername = (dialog.entity && dialog.entity.username) || null;
 
                 const chatSalvo = await buscarChat(db, chatId);
-                const ultimoId = (chatSalvo && chatSalvo.lastScannedMessageId) || 0;
+                const ultimoId = reescanearDoZero ? 0 : (chatSalvo && chatSalvo.lastScannedMessageId) || 0;
 
                 atualizarStatus(`Escaneando: ${chatTitle} (a partir da mensagem ${ultimoId})...`);
 
@@ -702,19 +776,22 @@
                     maxIdVisto = Math.max(maxIdVisto, mensagem.id);
 
                     const { reactions, total } = extrairReacoes(mensagem);
-                    if (total > 0) {
-                        await salvarMensagem(db, {
-                            key: chatId + ":" + mensagem.id,
-                            chatId,
-                            messageId: mensagem.id,
-                            dateUtc: dataIso(mensagem),
-                            textPreview: textoPreview(mensagem),
-                            reactionTotal: total,
-                            reactions,
-                            chatTitle,
-                        });
-                        comReacao++;
-                    }
+                    // Salva toda mensagem, nao so as com reacao - o texto
+                    // completo de tudo e o que permite a busca por palavra-
+                    // chave (tela "Buscar mensagens"). reactionTotal fica 0
+                    // quando nao tem reacao, e o ranking de "top reacoes"
+                    // continua filtrando por ele normalmente.
+                    await salvarMensagem(db, {
+                        key: chatId + ":" + mensagem.id,
+                        chatId,
+                        messageId: mensagem.id,
+                        dateUtc: dataIso(mensagem),
+                        texto: textoCompleto(mensagem),
+                        reactionTotal: total,
+                        reactions,
+                        chatTitle,
+                    });
+                    if (total > 0) comReacao++;
 
                     if (totalVistas % 500 === 0) {
                         const segundos = Math.round((Date.now() - inicio) / 1000);
@@ -809,7 +886,7 @@
                     escapeHtml(m.chatTitle) +
                     "</div>" +
                     "<div>" +
-                    escapeHtml(m.textPreview) +
+                    escapeHtml(truncar(m.texto || m.textPreview || "", 160)) +
                     "</div>";
                 item.querySelector(".trp-abrir").addEventListener("click", () => {
                     const url = "https://web.telegram.org/k/#" + idBaseDoChatId(m.chatId) + "?post=" + m.messageId;
@@ -823,6 +900,87 @@
         selectGrupo.addEventListener("change", atualizarLista);
         inputMinimo.addEventListener("change", atualizarLista);
         await atualizarLista();
+    }
+
+    // ---- Tela de busca por palavra-chave ----
+
+    async function telaBusca() {
+        const corpo = corpoDoPainel();
+        botaoVoltar(corpo);
+
+        const db = await abrirBanco();
+        const chats = await listarChats(db);
+        chats.sort((a, b) => (a.chatTitle || "").localeCompare(b.chatTitle || ""));
+
+        const aviso = document.createElement("div");
+        aviso.style.cssText = "color:#8b92a3;margin-bottom:10px;";
+        aviso.textContent =
+            "Busca so dentro do que ja foi escaneado. Grupo escaneado antes dessa funcao existir pode precisar de \"reescanear do zero\" (tela de scan) pra ter o texto completo salvo.";
+        corpo.appendChild(aviso);
+
+        const filtros = document.createElement("div");
+        filtros.style.cssText = "margin-bottom:10px;";
+        filtros.innerHTML =
+            '<select id="trp-busca-grupo" style="width:100%;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;box-sizing:border-box;">' +
+            '<option value="">Todos os grupos</option>' +
+            "</select>";
+        corpo.appendChild(filtros);
+        const selectGrupo = filtros.querySelector("#trp-busca-grupo");
+        for (const c of chats) {
+            const opcao = document.createElement("option");
+            opcao.value = c.chatId;
+            opcao.textContent = c.chatTitle || c.chatId;
+            selectGrupo.appendChild(opcao);
+        }
+
+        const campoBusca = campoTexto(corpo, "Palavra ou trecho a buscar", "text");
+        const botaoBuscar = botaoAcao(corpo, "Buscar");
+
+        const lista = document.createElement("div");
+        corpo.appendChild(lista);
+
+        async function executarBusca() {
+            const termo = campoBusca.value.trim();
+            if (!termo) {
+                lista.innerHTML = '<div style="color:#8b92a3;">Digita algo pra buscar.</div>';
+                return;
+            }
+            lista.innerHTML = '<div style="color:#8b92a3;">Buscando...</div>';
+            const chatId = selectGrupo.value || null;
+            const mensagens = await buscarTexto(db, { termo, chatId, limite: 100 });
+            if (!mensagens.length) {
+                lista.innerHTML = '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>';
+                return;
+            }
+            lista.innerHTML = "";
+            for (const m of mensagens) {
+                const texto = m.texto || m.textPreview || "";
+                const item = document.createElement("div");
+                item.style.cssText = "padding:8px 0;border-bottom:1px solid #2a2f3a;";
+                item.innerHTML =
+                    '<div style="color:#4da3ff;font-weight:600;cursor:pointer;" class="trp-abrir">' +
+                    escapeHtml(m.dateUtc.slice(0, 10)) +
+                    (m.reactionTotal ? " - " + m.reactionTotal + " reacoes" : "") +
+                    "</div>" +
+                    '<div style="color:#8b92a3;font-size:11px;">' +
+                    escapeHtml(m.chatTitle) +
+                    "</div>" +
+                    "<div>" +
+                    escapeHtml(truncar(texto, 200)) +
+                    "</div>";
+                item.querySelector(".trp-abrir").addEventListener("click", () => {
+                    const url = "https://web.telegram.org/k/#" + idBaseDoChatId(m.chatId) + "?post=" + m.messageId;
+                    console.log("[Top Reacoes] abrindo:", url);
+                    window.open(url, "_blank");
+                });
+                lista.appendChild(item);
+            }
+        }
+
+        botaoBuscar.addEventListener("click", executarBusca);
+        campoBusca.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter") executarBusca();
+        });
     }
 
     function escapeHtml(texto) {

@@ -129,6 +129,52 @@ tentativas erradas (hash estatico sem reload; abrir em aba nova mas sem o
   gravado junto com cada chat. So vira `true` quando o loop de mensagens
   daquele chat termina sozinho (sem o usuario ter clicado "Parar"). Aparece
   como badge "completo"/"parcial" na tabela acima.
+- **Botao de sair**: tirado do menu principal (onde ficava do lado de
+  "Escanear"/"Ver top reacoes" e corria risco de clique por acidente) e
+  movido pra um texto pequeno no cabecalho do painel, do lado do "x" de
+  fechar. Exige dois cliques (primeiro vira "confirmar?" em vermelho por
+  3s, so sai no segundo clique dentro desse tempo) - sem usar `confirm()`
+  nativo do navegador, que trava a pagina.
+
+## Busca por palavra-chave (a busca nativa do Telegram falha)
+
+Confirmado por pesquisa (nao era "coisa da cabeca" do usuario): a busca
+nativa do Telegram e indexada por PALAVRA INTEIRA, nao por substring. Ha uma
+thread de bug aberta desde 2020 (`bugs.telegram.org/c/724`) pedindo busca
+por substring pra idiomas sem espaco entre palavras (chines/japones), ainda
+sem correcao oficial confirmada - o status e so "Added", sem resposta da
+equipe do Telegram explicando ou corrigindo. Na pratica isso tambem afeta
+busca por trechos/variacoes de palavra em qualquer idioma, inclusive
+portugues: se a palavra busca nao bate exatamente com o token indexado
+(singular/plural, acentuacao em certos casos, parte de uma palavra
+composta), a busca nao acha a mensagem mesmo ela existindo.
+
+**Solucao implementada**: aproveitar o que o scan ja escaneia. Antes, o
+scan so salvava mensagens COM reacao (o resto era so contado e descartado).
+Agora `escanearTudo()` salva o texto completo de TODA mensagem (campo
+`texto`, sem truncar - antes era `textPreview`, truncado em 120 caracteres
+e so pra mensagem com reacao). `reactionTotal` fica 0 quando nao tem
+reacao, e o ranking de "top reacoes" continua funcionando igual (filtra
+por esse campo).
+
+Nova tela "Buscar mensagens" (`telaBusca()`) faz busca por substring
+usando `buscarTexto()`: percorre as mensagens ja salvas (por chat, via o
+indice `por_chat`, ou tudo via cursor na tabela toda) comparando o texto
+normalizado (`normalizarTexto()` - remove acentuacao com
+`.normalize("NFD")` + regex, poe em minusculo) contra o termo buscado,
+tambem normalizado. E simples (sem indice invertido, sem lib de busca) e
+roda inteiramente no navegador - suficiente pra escala de uso pessoal.
+
+**Trade-off que o usuario precisa saber**: grupos que ja foram escaneados
+ANTES dessa mudanca so tem o texto das mensagens com reacao salvo - as
+outras foram descartadas na epoca e nao tem como recuperar o texto sem
+escanear nao de novo. Pra backfill, a tela de scan ganhou um checkbox
+"Reescanear esse grupo do zero" (so aparece quando um grupo especifico,
+nao "Todos", esta selecionado) que zera o `lastScannedMessageId` daquele
+chat antes de rodar, forcando o scan a percorrer o historico inteiro de
+novo - dessa vez salvando tudo. Isso tambem significa que o banco local
+agora guarda MUITO mais linhas (toda mensagem, nao so as com reacao), o
+que e esperado e aceitavel pra uso pessoal mas vale deixar claro.
 
 ## Estilo de trabalho esperado pelo usuario (Lohran)
 
@@ -164,10 +210,12 @@ ter ponto-e-virgula no corpo.
 
 Tudo que foi pedido ate agora (login, scan, armazenamento, ranking, link
 pra mensagem exata, escolha de grupo, visibilidade do que foi salvo, marca
-de completo/parcial) esta implementado e entregue. Nao ha pendencia
-conhecida - a ultima leva de mudancas (escolha de grupo + tabela +
-completo/parcial) ainda nao foi validada pelo usuario no Telegram real dele
-no momento em que este documento foi escrito.
+de completo/parcial, botao de sair no cabecalho, busca por palavra-chave)
+esta implementado e entregue. A busca por palavra-chave ainda nao foi
+validada pelo usuario no Telegram real dele no momento em que este trecho
+foi escrito - vale conferir se o desempenho fica bom em grupos grandes
+(o scan agora grava toda mensagem, nao so as com reacao) e se o backfill
+via "reescanear do zero" funciona como esperado.
 
 Se aparecer um proximo problema relatado pelo usuario, documentar aqui
 depois de resolvido: o que quebrou, por que, e a correcao - nesse mesmo

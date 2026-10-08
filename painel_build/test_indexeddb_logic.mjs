@@ -50,6 +50,42 @@ function salvarMensagem(db, registro) {
     });
 }
 
+function normalizarTexto(texto) {
+    return (texto || "")
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "")
+        .toLowerCase();
+}
+
+function buscarTexto(db, { termo, chatId, limite }) {
+    return new Promise((resolve, reject) => {
+        const termoNormalizado = normalizarTexto(termo);
+        const resultados = [];
+        let visitados = 0;
+        const LIMITE_VISITAS = 300000;
+
+        const loja = transacao(db, "mensagens", "readonly");
+        const pedido = chatId ? loja.index("por_chat").openCursor(IDBKeyRange.only(chatId)) : loja.openCursor();
+
+        pedido.onsuccess = () => {
+            const cursor = pedido.result;
+            if (!cursor || resultados.length >= limite || visitados >= LIMITE_VISITAS) {
+                resultados.sort((a, b) => (a.dateUtc < b.dateUtc ? 1 : -1));
+                resolve(resultados.slice(0, limite));
+                return;
+            }
+            visitados++;
+            const valor = cursor.value;
+            const texto = valor.texto || valor.textPreview || "";
+            if (normalizarTexto(texto).includes(termoNormalizado)) {
+                resultados.push(valor);
+            }
+            cursor.continue();
+        };
+        pedido.onerror = () => reject(pedido.error);
+    });
+}
+
 function contarMensagensDoChat(db, chatId) {
     return new Promise((resolve, reject) => {
         const indice = transacao(db, "mensagens", "readonly").index("por_chat");
@@ -145,6 +181,41 @@ const chatA = await buscarChat(db, "A");
 const chatB = await buscarChat(db, "B");
 assert(chatA.concluido === true, "grupo A persiste concluido=true");
 assert(chatB.concluido === false, "grupo B persiste concluido=false (scan parcial)");
+
+// ---- buscarTexto - busca por palavra-chave, ignorando acento/caixa ----
+await salvarMensagem(db, {
+    key: "A:4",
+    chatId: "A",
+    messageId: 4,
+    reactionTotal: 0,
+    chatTitle: "Grupo A",
+    texto: "Aqui fala sobre informação confidencial do projeto",
+    dateUtc: "2026-01-06T00:00:00Z",
+});
+await salvarMensagem(db, {
+    key: "B:3",
+    chatId: "B",
+    messageId: 3,
+    reactionTotal: 0,
+    chatTitle: "Grupo B",
+    texto: "Nada a ver com o termo buscado",
+    dateUtc: "2026-01-07T00:00:00Z",
+});
+
+const achouSemAcento = await buscarTexto(db, { termo: "informacao", chatId: null, limite: 10 });
+assert(
+    achouSemAcento.some((m) => m.chatId === "A" && m.messageId === 4),
+    "acha 'informacao' (sem acento) batendo com 'informação' no texto original"
+);
+
+const achouComAcentoEMaiuscula = await buscarTexto(db, { termo: "INFORMAÇÃO", chatId: null, limite: 10 });
+assert(achouComAcentoEMaiuscula.length === 1, "busca ignora acento e caixa tambem no termo digitado");
+
+const filtradoPorChatErrado = await buscarTexto(db, { termo: "informacao", chatId: "B", limite: 10 });
+assert(filtradoPorChatErrado.length === 0, "filtro por chat respeita o grupo escolhido (B nao tem esse termo)");
+
+const semResultado = await buscarTexto(db, { termo: "termoquenaoexisteemlugarnenhum", chatId: null, limite: 10 });
+assert(semResultado.length === 0, "termo inexistente retorna lista vazia");
 
 // ---- idBaseDoChatId (copiada de painel_logic.js) ----
 // O link que abre a MENSAGEM EXATA (visto no codigo-fonte do Telegram Web,
