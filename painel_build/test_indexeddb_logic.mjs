@@ -50,6 +50,33 @@ function salvarMensagem(db, registro) {
     });
 }
 
+function marcarVisto(db, key, visto) {
+    return new Promise((resolve, reject) => {
+        const loja = transacao(db, "mensagens", "readwrite");
+        const pedidoGet = loja.get(key);
+        pedidoGet.onsuccess = () => {
+            const registro = pedidoGet.result;
+            if (!registro) {
+                resolve();
+                return;
+            }
+            registro.visto = visto;
+            const pedidoPut = loja.put(registro);
+            pedidoPut.onsuccess = () => resolve();
+            pedidoPut.onerror = () => reject(pedidoPut.error);
+        };
+        pedidoGet.onerror = () => reject(pedidoGet.error);
+    });
+}
+
+function buscarMensagem(db, key) {
+    return new Promise((resolve, reject) => {
+        const pedido = transacao(db, "mensagens", "readonly").get(key);
+        pedido.onsuccess = () => resolve(pedido.result || null);
+        pedido.onerror = () => reject(pedido.error);
+    });
+}
+
 function normalizarTexto(texto) {
     return (texto || "")
         .normalize("NFD")
@@ -238,5 +265,29 @@ assert(
     "canal/supergrupo: tira o sinal e o 100 do meio (-1001316938498 -> 1316938498)"
 );
 assert(idBaseDoChatId("-1316938498") === "1316938498", "grupo basico: tira so o sinal (-1316938498 -> 1316938498)");
+
+// ---- marcarVisto - toggle manual de "ja visualizado" por mensagem ----
+await salvarMensagem(db, {
+    key: "A:5",
+    chatId: "A",
+    messageId: 5,
+    reactionTotal: 1,
+    chatTitle: "Grupo A",
+    texto: "mensagem qualquer",
+    dateUtc: "2026-01-08T00:00:00Z",
+});
+let msgA5 = await buscarMensagem(db, "A:5");
+assert(!msgA5.visto, "mensagem recem salva comeca sem 'visto' marcado");
+
+await marcarVisto(db, "A:5", true);
+msgA5 = await buscarMensagem(db, "A:5");
+assert(msgA5.visto === true, "marcarVisto(true) persiste visto=true");
+
+await marcarVisto(db, "A:5", false);
+msgA5 = await buscarMensagem(db, "A:5");
+assert(msgA5.visto === false, "marcarVisto(false) desmarca de novo");
+
+await marcarVisto(db, "chave-que-nao-existe", true);
+assert(true, "marcarVisto numa chave inexistente nao quebra (so nao faz nada)");
 
 console.log("\nTODOS OS TESTES PASSARAM");

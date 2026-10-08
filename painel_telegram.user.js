@@ -169567,6 +169567,29 @@ store2/dist/store2.js:
         });
     }
 
+    // Marca (ou desmarca) uma mensagem como "ja vista" - controle 100%
+    // manual do usuario (nao e automatico, nao expira, nao tem logica por
+    // tras). Usado pela caixinha em cada item das listas de resultado (top
+    // reacoes e busca).
+    function marcarVisto(db, key, visto) {
+        return new Promise((resolve, reject) => {
+            const loja = transacao(db, "mensagens", "readwrite");
+            const pedidoGet = loja.get(key);
+            pedidoGet.onsuccess = () => {
+                const registro = pedidoGet.result;
+                if (!registro) {
+                    resolve();
+                    return;
+                }
+                registro.visto = visto;
+                const pedidoPut = loja.put(registro);
+                pedidoPut.onsuccess = () => resolve();
+                pedidoPut.onerror = () => reject(pedidoPut.error);
+            };
+            pedidoGet.onerror = () => reject(pedidoGet.error);
+        });
+    }
+
     // Conta quantas mensagens com reacao ja estao salvas de um chat - usado
     // pra mostrar "o que ja foi salvo", sem precisar confiar num contador
     // separado que poderia ficar desatualizado.
@@ -169859,40 +169882,38 @@ store2/dist/store2.js:
         return botao;
     }
 
-    // Caixinha marcavel feita na mao (nao usa <input type="checkbox">
+    // Quadrado marcavel feito na mao (nao usa <input type="checkbox">
     // nativo). O CSS global do Telegram Web reseta a aparencia de checkbox
     // nativo sem recolocar nada visivel no lugar - o elemento continua
     // funcional (por isso o cursor vira de "clicavel"), mas invisivel. Um
     // quadrado de verdade desenhado por nos nao depende do CSS do site.
-    function caixaMarcavel(corpo, rotuloInicial) {
-        const bloco = document.createElement("div");
-        bloco.style.cssText =
-            "margin-bottom:10px;padding:8px;border:1px solid #3a4150;border-radius:6px;background:#1c2028;" +
-            "color:#e6e8ec;font-size:12px;display:flex;align-items:flex-start;gap:8px;cursor:pointer;user-select:none;";
+    // Qualquer novo controle de formulario (checkbox, radio, etc.) deve
+    // seguir esse mesmo padrao. Sem label proprio - o chamador decide o
+    // layout em volta (usado como "marcar como visto" em cada item das
+    // listas de resultado).
+    function criarQuadradoMarcavel(valorInicial, aoAlternar) {
         const quadrado = document.createElement("div");
         quadrado.style.cssText =
-            "width:18px;height:18px;flex-shrink:0;margin-top:1px;border:2px solid #8b92a3;border-radius:4px;" +
-            "display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;color:#fff;background:#0c0e12;";
-        const texto = document.createElement("span");
-        texto.textContent = rotuloInicial;
-        bloco.appendChild(quadrado);
-        bloco.appendChild(texto);
-        corpo.appendChild(bloco);
+            "width:18px;height:18px;flex-shrink:0;margin-top:2px;border:2px solid #8b92a3;border-radius:4px;" +
+            "display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;color:#fff;" +
+            "background:#0c0e12;cursor:pointer;user-select:none;";
 
-        let marcado = false;
+        let marcado = !!valorInicial;
         const atualizarVisual = () => {
             quadrado.textContent = marcado ? "✓" : "";
             quadrado.style.background = marcado ? "#4da3ff" : "#0c0e12";
             quadrado.style.borderColor = marcado ? "#4da3ff" : "#8b92a3";
         };
-        bloco.addEventListener("click", () => {
-            if (bloco.style.pointerEvents === "none") return;
+        quadrado.addEventListener("click", (ev) => {
+            ev.stopPropagation(); // nao deixa o clique vazar pro "abrir mensagem" do item
             marcado = !marcado;
             atualizarVisual();
+            if (aoAlternar) aoAlternar(marcado);
         });
         atualizarVisual();
 
         return {
+            elemento: quadrado,
             get checked() {
                 return marcado;
             },
@@ -169900,11 +169921,6 @@ store2/dist/store2.js:
                 marcado = !!valor;
                 atualizarVisual();
             },
-            set disabled(valor) {
-                bloco.style.opacity = valor ? "0.5" : "1";
-                bloco.style.pointerEvents = valor ? "none" : "auto";
-            },
-            elementoTexto: texto,
         };
     }
 
@@ -170124,9 +170140,12 @@ store2/dist/store2.js:
         for (const c of chats) {
             const total = await contarMensagensDoChat(db, c.chatId);
             const quando = c.lastScannedAt ? new Date(c.lastScannedAt).toLocaleString() : "-";
-            const badge = c.concluido
-                ? '<span style="color:#5ec26a;">completo</span>'
-                : '<span style="color:#e0a93a;">parcial</span>';
+            const backfillPendente = typeof c.backfillAlvo === "number" && (c.textoCompletoAte || 0) < c.backfillAlvo;
+            const badge = !c.concluido
+                ? '<span style="color:#e0a93a;">parcial</span>'
+                : backfillPendente
+                ? '<span style="color:#e0a93a;">completando historico antigo</span>'
+                : '<span style="color:#5ec26a;">completo</span>';
             linhas.push(
                 "<tr>" +
                     '<td style="padding:4px 6px;">' +
@@ -170171,21 +170190,6 @@ store2/dist/store2.js:
         corpo.appendChild(blocoSelecao);
         const selectGrupo = blocoSelecao.querySelector("#trp-select-grupo");
 
-        // Escaneio normal so busca mensagem nova (a partir do checkpoint
-        // salvo) - um grupo que ja estava "completo" antes da busca por
-        // palavra-chave existir fica parado nesse checkpoint e NAO ganha o
-        // texto completo das mensagens antigas sozinho, mesmo rodando
-        // "Todos" de novo. Esse checkbox forca ignorar o checkpoint; com
-        // "Todos" selecionado, vale pra cada grupo que o scan passar.
-        const checkboxReescanear = caixaMarcavel(corpo, "Reescanear do zero");
-        const atualizarTextoReescanear = () => {
-            checkboxReescanear.elementoTexto.textContent = selectGrupo.value
-                ? "Reescanear esse grupo do zero (pega o texto completo de mensagens antigas que ainda nao foram salvas, util pra busca)"
-                : 'Reescanear TODOS os grupos do zero (ignora o progresso salvo de cada um - pode demorar bem mais que o normal, repassa o historico inteiro de novo)';
-        };
-        atualizarTextoReescanear();
-        selectGrupo.addEventListener("change", atualizarTextoReescanear);
-
         carregarGruposParaSelecao()
             .then((grupos) => {
                 const carregando = selectGrupo.querySelector("#trp-carregando-grupos");
@@ -170206,7 +170210,7 @@ store2/dist/store2.js:
         status.style.cssText = "color:#8b92a3;margin-bottom:10px;white-space:pre-line;";
         status.textContent = scanEmAndamento
             ? "Scan ja esta rodando..."
-            : 'Escolhe um grupo especifico ou deixa em "Todos". Continua de onde parou da ultima vez - pode parar e retomar a hora que quiser.';
+            : 'Escolhe um grupo especifico ou deixa em "Todos". Continua de onde parou da ultima vez - pode parar e retomar a hora que quiser. Historico antigo que ainda nao tem texto completo salvo (grupos escaneados antes da busca por palavra-chave existir) e completado automaticamente, sem precisar marcar nada.';
         corpo.appendChild(status);
 
         const botaoIniciar = botaoAcao(corpo, scanEmAndamento ? "Scan em andamento..." : "Iniciar scan");
@@ -170236,16 +170240,13 @@ store2/dist/store2.js:
             botaoParar.style.display = "block";
             selectGrupo.disabled = true;
             const apenasChatId = selectGrupo.value || null;
-            const reescanearDoZero = checkboxReescanear.checked;
-            checkboxReescanear.disabled = true;
             try {
                 await escanearTudo(
                     (texto) => {
                         status.textContent = texto;
                     },
                     apenasChatId,
-                    () => renderizarTabelaChats(tabela, db),
-                    reescanearDoZero
+                    () => renderizarTabelaChats(tabela, db)
                 );
                 status.textContent = cancelarScanSolicitado
                     ? "Scan interrompido - o que ja foi visto fica salvo, pode retomar depois."
@@ -170259,8 +170260,6 @@ store2/dist/store2.js:
                 botaoIniciar.textContent = "Iniciar scan de novo";
                 botaoParar.style.display = "none";
                 selectGrupo.disabled = false;
-                checkboxReescanear.disabled = false;
-                checkboxReescanear.checked = false;
                 await renderizarTabelaChats(tabela, db);
             }
         });
@@ -170271,11 +170270,24 @@ store2/dist/store2.js:
     // iterDialogs() devolve.
     // aoAtualizarChat: callback opcional chamado toda vez que um chat e
     // salvo (checkpoint ou fim), pra tela de scan atualizar a tabela ao vivo.
-    // reescanearDoZero: ignora o lastScannedMessageId salvo e comeca do
-    // zero nesse chat - usado pra backfill de texto completo em grupos que
-    // ja foram escaneados antes da busca por palavra-chave existir (so a
-    // mensagem com reacao era salva, o resto era descartado).
-    async function escanearTudo(atualizarStatus, apenasChatId, aoAtualizarChat, reescanearDoZero) {
+    //
+    // Cada chat passa por duas fases, sem nenhum toggle manual:
+    //
+    // Fase 1 (backfill automatico): completa o texto das mensagens antigas,
+    // de quando o chat foi escaneado antes da busca por palavra-chave
+    // existir (so a mensagem com reacao era salva, o resto era descartado).
+    // "backfillAlvo" congela, na primeira vez que o chat ganha essa
+    // funcionalidade, o checkpoint antigo (o limite abaixo do qual o
+    // historico pode estar incompleto); "textoCompletoAte" e o ponteiro
+    // retomavel de ate onde esse backfill ja avancou. So roda enquanto
+    // textoCompletoAte < backfillAlvo - uma vez que alcanca o alvo, nunca
+    // mais roda de novo nesse chat.
+    //
+    // Fase 2 (scan incremental, igual sempre foi): continua de
+    // lastScannedMessageId pra frente, pegando so mensagem nova. So comeca
+    // se a fase 1 nao foi interrompida (senao o chat fica pra terminar o
+    // backfill na proxima vez antes de seguir pra mensagem nova).
+    async function escanearTudo(atualizarStatus, apenasChatId, aoAtualizarChat) {
         if (scanEmAndamento) return;
         scanEmAndamento = true;
         cancelarScanSolicitado = false;
@@ -170292,30 +170304,109 @@ store2/dist/store2.js:
                 const chatUsername = (dialog.entity && dialog.entity.username) || null;
 
                 const chatSalvo = await buscarChat(db, chatId);
-                const ultimoId = reescanearDoZero ? 0 : (chatSalvo && chatSalvo.lastScannedMessageId) || 0;
+
+                let backfillAlvo = 0;
+                let textoCompletoAte = 0;
+                if (chatSalvo) {
+                    if (typeof chatSalvo.backfillAlvo === "number") {
+                        backfillAlvo = chatSalvo.backfillAlvo;
+                        textoCompletoAte = chatSalvo.textoCompletoAte || 0;
+                    } else {
+                        // chat ja existia de antes dessa funcionalidade -
+                        // assume o pior caso (nenhum texto completo do
+                        // historico antigo foi salvo ainda)
+                        backfillAlvo = chatSalvo.lastScannedMessageId || 0;
+                        textoCompletoAte = 0;
+                    }
+                }
+                let lastScannedMessageId = (chatSalvo && chatSalvo.lastScannedMessageId) || 0;
+                let cancelado = false;
+                const inicio = Date.now();
+
                 console.log("[Top Reacoes] scan:", {
                     chatTitle,
                     chatId,
-                    reescanearDoZero,
-                    lastScannedMessageIdSalvo: chatSalvo && chatSalvo.lastScannedMessageId,
-                    ultimoId,
+                    backfillAlvo,
+                    textoCompletoAte,
+                    lastScannedMessageId,
                 });
 
-                atualizarStatus(`Escaneando: ${chatTitle} (a partir da mensagem ${ultimoId})...`);
+                const salvarCheckpoint = async (concluido) => {
+                    await salvarChat(db, {
+                        chatId,
+                        chatTitle,
+                        chatUsername,
+                        lastScannedMessageId,
+                        lastScannedAt: new Date().toISOString(),
+                        concluido,
+                        backfillAlvo,
+                        textoCompletoAte,
+                    });
+                    if (aoAtualizarChat) await aoAtualizarChat();
+                };
 
-                let maxIdVisto = ultimoId;
+                // ---- Fase 1: backfill automatico do historico antigo ----
+                if (textoCompletoAte < backfillAlvo) {
+                    let totalVistas = 0;
+                    atualizarStatus(
+                        `${chatTitle}: completando historico antigo (mensagem ${textoCompletoAte} ate ${backfillAlvo})...`
+                    );
+                    for await (const mensagem of cliente.iterMessages(dialog.entity, {
+                        minId: textoCompletoAte,
+                        maxId: backfillAlvo + 1,
+                        reverse: true,
+                    })) {
+                        if (cancelarScanSolicitado) {
+                            cancelado = true;
+                            break;
+                        }
+                        totalVistas++;
+                        textoCompletoAte = mensagem.id;
+
+                        const { reactions, total } = extrairReacoes(mensagem);
+                        await salvarMensagem(db, {
+                            key: chatId + ":" + mensagem.id,
+                            chatId,
+                            messageId: mensagem.id,
+                            dateUtc: dataIso(mensagem),
+                            texto: textoCompleto(mensagem),
+                            reactionTotal: total,
+                            reactions,
+                            chatTitle,
+                        });
+
+                        if (totalVistas % 500 === 0) {
+                            const segundos = Math.round((Date.now() - inicio) / 1000);
+                            atualizarStatus(
+                                `${chatTitle}: completando historico antigo, ${totalVistas} mensagens (${segundos}s)...`
+                            );
+                            await salvarCheckpoint(false);
+                        }
+                    }
+                    await salvarCheckpoint(false);
+                }
+
+                if (cancelado) {
+                    if (apenasChatId) break;
+                    continue; // backfill ficou parcial - termina na proxima vez antes de seguir pra mensagem nova
+                }
+
+                // ---- Fase 2: scan incremental normal (so mensagem nova) ----
+                atualizarStatus(`Escaneando: ${chatTitle} (a partir da mensagem ${lastScannedMessageId})...`);
                 let totalVistas = 0;
                 let comReacao = 0;
                 let terminouSemCancelar = true;
-                const inicio = Date.now();
 
-                for await (const mensagem of cliente.iterMessages(dialog.entity, { minId: ultimoId, reverse: true })) {
+                for await (const mensagem of cliente.iterMessages(dialog.entity, {
+                    minId: lastScannedMessageId,
+                    reverse: true,
+                })) {
                     if (cancelarScanSolicitado) {
                         terminouSemCancelar = false;
                         break;
                     }
                     totalVistas++;
-                    maxIdVisto = Math.max(maxIdVisto, mensagem.id);
+                    lastScannedMessageId = Math.max(lastScannedMessageId, mensagem.id);
 
                     const { reactions, total } = extrairReacoes(mensagem);
                     // Salva toda mensagem, nao so as com reacao - o texto
@@ -170340,27 +170431,11 @@ store2/dist/store2.js:
                         atualizarStatus(
                             `${chatTitle}: ${totalVistas} mensagens verificadas (${segundos}s), ${comReacao} com reacao...`
                         );
-                        await salvarChat(db, {
-                            chatId,
-                            chatTitle,
-                            chatUsername,
-                            lastScannedMessageId: maxIdVisto,
-                            lastScannedAt: new Date().toISOString(),
-                            concluido: false,
-                        });
-                        if (aoAtualizarChat) await aoAtualizarChat();
+                        await salvarCheckpoint(false);
                     }
                 }
 
-                await salvarChat(db, {
-                    chatId,
-                    chatTitle,
-                    chatUsername,
-                    lastScannedMessageId: maxIdVisto,
-                    lastScannedAt: new Date().toISOString(),
-                    concluido: terminouSemCancelar,
-                });
-                if (aoAtualizarChat) await aoAtualizarChat();
+                await salvarCheckpoint(terminouSemCancelar);
 
                 if (apenasChatId) break; // so o grupo escolhido, nao segue pros outros
             }
@@ -170405,11 +170480,19 @@ store2/dist/store2.js:
             return;
         }
 
+        // Limite cresce com "Mostrar mais" - comeca em 50. Esse limite (fixo
+        // em 50 e sem jeito de pedir mais) era o motivo de mensagem com
+        // reacao suficiente "sumir" da lista: com "Todos os grupos"
+        // selecionado, o ranking mistura todo mundo, entao uma mensagem de
+        // um grupo pode ficar fora dos top 50 globais mesmo tendo mais
+        // reacao que mensagens exibidas de outro grupo.
+        let limiteAtual = 50;
+
         async function atualizarLista() {
             lista.innerHTML = '<div style="color:#8b92a3;">Carregando...</div>';
             const chatId = selectGrupo.value || null;
             const minimo = parseInt(inputMinimo.value, 10) || 1;
-            const mensagens = await buscarTop(db, { chatId, minimo, limite: 50 });
+            const mensagens = await buscarTop(db, { chatId, minimo, limite: limiteAtual });
             if (!mensagens.length) {
                 lista.innerHTML = '<div style="color:#8b92a3;">Nenhuma mensagem encontrada com esse filtro.</div>';
                 return;
@@ -170417,8 +170500,19 @@ store2/dist/store2.js:
             lista.innerHTML = "";
             for (const m of mensagens) {
                 const item = document.createElement("div");
-                item.style.cssText = "padding:8px 0;border-bottom:1px solid #2a2f3a;";
-                item.innerHTML =
+                item.style.cssText =
+                    "padding:8px 0;border-bottom:1px solid #2a2f3a;display:flex;gap:8px;align-items:flex-start;" +
+                    (m.visto ? "opacity:0.55;" : "");
+
+                const quadrado = criarQuadradoMarcavel(m.visto, (novoValor) => {
+                    marcarVisto(db, m.key, novoValor);
+                    item.style.opacity = novoValor ? "0.55" : "1";
+                });
+                item.appendChild(quadrado.elemento);
+
+                const conteudo = document.createElement("div");
+                conteudo.style.cssText = "flex:1;min-width:0;";
+                conteudo.innerHTML =
                     '<div style="color:#4da3ff;font-weight:600;cursor:pointer;" class="trp-abrir">' +
                     m.reactionTotal +
                     " reacoes - " +
@@ -170430,17 +170524,32 @@ store2/dist/store2.js:
                     "<div>" +
                     escapeHtml(truncar(m.texto || m.textPreview || "", 160)) +
                     "</div>";
-                item.querySelector(".trp-abrir").addEventListener("click", () => {
+                conteudo.querySelector(".trp-abrir").addEventListener("click", () => {
                     const url = "https://web.telegram.org/k/#" + idBaseDoChatId(m.chatId) + "?post=" + m.messageId;
                     console.log("[Top Reacoes] abrindo:", url);
                     window.open(url, "_blank");
                 });
+                item.appendChild(conteudo);
                 lista.appendChild(item);
+            }
+
+            if (mensagens.length >= limiteAtual) {
+                const botaoMais = botaoAcao(lista, "Mostrar mais");
+                botaoMais.addEventListener("click", () => {
+                    limiteAtual += 50;
+                    atualizarLista();
+                });
             }
         }
 
-        selectGrupo.addEventListener("change", atualizarLista);
-        inputMinimo.addEventListener("change", atualizarLista);
+        selectGrupo.addEventListener("change", () => {
+            limiteAtual = 50;
+            atualizarLista();
+        });
+        inputMinimo.addEventListener("change", () => {
+            limiteAtual = 50;
+            atualizarLista();
+        });
         await atualizarLista();
     }
 
@@ -170457,7 +170566,7 @@ store2/dist/store2.js:
         const aviso = document.createElement("div");
         aviso.style.cssText = "color:#8b92a3;margin-bottom:10px;";
         aviso.textContent =
-            "Busca so dentro do que ja foi escaneado. Grupo escaneado antes dessa funcao existir pode precisar de \"reescanear do zero\" (tela de scan) pra ter o texto completo salvo.";
+            "Busca so dentro do que ja foi escaneado. Grupo escaneado antes dessa funcao existir completa o texto do historico antigo sozinho na proxima vez que passar pelo scan (tela de scan mostra \"completando historico antigo\" enquanto isso roda).";
         corpo.appendChild(aviso);
 
         const filtros = document.createElement("div");
@@ -170498,8 +170607,19 @@ store2/dist/store2.js:
             for (const m of mensagens) {
                 const texto = m.texto || m.textPreview || "";
                 const item = document.createElement("div");
-                item.style.cssText = "padding:8px 0;border-bottom:1px solid #2a2f3a;";
-                item.innerHTML =
+                item.style.cssText =
+                    "padding:8px 0;border-bottom:1px solid #2a2f3a;display:flex;gap:8px;align-items:flex-start;" +
+                    (m.visto ? "opacity:0.55;" : "");
+
+                const quadrado = criarQuadradoMarcavel(m.visto, (novoValor) => {
+                    marcarVisto(db, m.key, novoValor);
+                    item.style.opacity = novoValor ? "0.55" : "1";
+                });
+                item.appendChild(quadrado.elemento);
+
+                const conteudo = document.createElement("div");
+                conteudo.style.cssText = "flex:1;min-width:0;";
+                conteudo.innerHTML =
                     '<div style="color:#4da3ff;font-weight:600;cursor:pointer;" class="trp-abrir">' +
                     escapeHtml(m.dateUtc.slice(0, 10)) +
                     (m.reactionTotal ? " - " + m.reactionTotal + " reacoes" : "") +
@@ -170510,11 +170630,12 @@ store2/dist/store2.js:
                     "<div>" +
                     escapeHtml(truncar(texto, 200)) +
                     "</div>";
-                item.querySelector(".trp-abrir").addEventListener("click", () => {
+                conteudo.querySelector(".trp-abrir").addEventListener("click", () => {
                     const url = "https://web.telegram.org/k/#" + idBaseDoChatId(m.chatId) + "?post=" + m.messageId;
                     console.log("[Top Reacoes] abrindo:", url);
                     window.open(url, "_blank");
                 });
+                item.appendChild(conteudo);
                 lista.appendChild(item);
             }
         }

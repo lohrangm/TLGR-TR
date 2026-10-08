@@ -210,12 +210,13 @@ ter ponto-e-virgula no corpo.
 
 Tudo que foi pedido ate agora (login, scan, armazenamento, ranking, link
 pra mensagem exata, escolha de grupo, visibilidade do que foi salvo, marca
-de completo/parcial, botao de sair no cabecalho, busca por palavra-chave)
-esta implementado e entregue. A busca por palavra-chave ainda nao foi
-validada pelo usuario no Telegram real dele no momento em que este trecho
-foi escrito - vale conferir se o desempenho fica bom em grupos grandes
-(o scan agora grava toda mensagem, nao so as com reacao) e se o backfill
-via "reescanear do zero" funciona como esperado.
+de completo/parcial, botao de sair no cabecalho, busca por palavra-chave,
+backfill automatico do historico antigo, paginacao em "Ver top reacoes",
+marcar mensagem como "ja visto") esta implementado e entregue. Nao tem
+pendencia aberta no momento - proximos itens dependem de novo feedback do
+usuario (ver "Pesquisa de reclamacoes comuns do Telegram" mais abaixo pra
+ideias ainda nao conversadas com ele, como o "resumo do que rolou" pra
+grupo silenciado).
 
 ## "Reescanear do zero" preso ao modo de grupo unico (corrigido)
 
@@ -245,6 +246,9 @@ scan:", ...)`) no inicio de cada chat processado, mostrando
 `reescanearDoZero` e `ultimoId` - usado pra confirmar com evidencia real
 (log do usuario) que o problema seguinte nao era mais o checkbox escondido.
 
+**Esse checkbox foi removido depois** - ver "Backfill automatico" mais
+abaixo, que substitui esse mecanismo manual.
+
 ## Checkbox nativo invisivel no Telegram Web (corrigido)
 
 Depois do fix acima, o usuario reportou (com screenshot) que a caixinha
@@ -268,32 +272,85 @@ usar esse mesmo padrao de elemento proprio em vez de depender da aparencia
 nativa do navegador, porque o CSS do host (Telegram Web) pode reset-ar sem
 aviso.
 
-## Backlog (pedido pelo usuario, nao implementado ainda)
+## Backfill automatico (substitui o checkbox "Reescanear do zero")
 
-- **Marcar mensagem como "ja visto" (manual)**: usuario quer uma caixinha
-  por mensagem, tanto em "Ver top reacoes" quanto em "Buscar mensagens",
-  pra marcar que ja checou aquela mensagem - sem nenhuma logica automatica,
-  so controle manual dele. Ele mesmo disse que acha que e dificil de fazer,
-  mas NAO e: e so um campo booleano (`visto: true/false`) no registro da
-  mensagem + um checkbox na UI que chama `salvarMensagem()` de novo com
-  esse campo atualizado, no mesmo padrao do `concluido` que ja existe pros
-  chats. Prioridade baixa (ele deixou claro que e so pra anotar).
+O usuario chamou o checkbox manual de "gambiarra" com razao: pra completar
+o texto do historico antigo de um grupo especifico, ele tinha que
+selecionar aquele grupo, marcar o checkbox, esperar escanear tudo nele de
+novo, e repetir grupo a grupo - nada disso acontecia sozinho, mesmo rodando
+"Todos".
 
-- **Paginacao em "Ver top reacoes"**: hoje `buscarTop()` e chamado com
-  `limite: 50` fixo (`telaResultados()`), sem jeito de ver o resto. O
-  usuario pediu um botao "mostrar mais" no final da lista que carrega mais
-  resultados sob demanda (nao a lista inteira de uma vez). Prioridade alta
-  - ele foi explicito que esse e o que mais importa.
-- **Mesma paginacao em "Buscar mensagens"**: ele disse que nao tem certeza
-  se vale a pena aqui (menos prioridade que o item acima, mas vale
-  considerar junto ja que `buscarTexto()` tem a mesma limitacao de
-  `limite` fixo).
-- **Mostrar quais reacoes, nao so o total**: hoje `telaResultados()` so
-  exibe `m.reactionTotal` (numero). O registro ja guarda o array
-  `reactions` (`[{emoji, count}]`, separado por emoji), entao da pra
-  exibir sem precisar escanear de novo - e so renderizar esse array. Ultima
-  prioridade da lista, usuario deixou claro que so vale a pena se for
-  facil (e e - os dados ja estao salvos).
+`escanearTudo()` agora faz isso em duas fases, pra cada chat, sem nenhum
+toggle manual:
+
+- **Fase 1 (backfill automatico)**: completa o texto das mensagens antigas
+  de quando o chat foi escaneado antes da busca por palavra-chave existir
+  (so a mensagem com reacao era salva, o resto descartado). Dois campos
+  novos no registro do chat: `backfillAlvo` (congela, na primeira vez que o
+  chat passa por essa logica, o checkpoint antigo - o limite abaixo do
+  qual o historico pode estar incompleto) e `textoCompletoAte` (ponteiro
+  retomavel de ate onde o backfill ja avancou, comeca em 0). So roda
+  enquanto `textoCompletoAte < backfillAlvo`; usa
+  `iterMessages(entity, { minId: textoCompletoAte, maxId: backfillAlvo + 1,
+  reverse: true })` pra pegar exatamente o intervalo que falta, checkpoint
+  a cada 500 mensagens (mesmo padrao que a fase 2 ja usava). Uma vez que
+  alcanca o alvo, nunca mais roda de novo nesse chat - nao tem custo
+  recorrente.
+- **Fase 2 (scan incremental, igual sempre foi)**: continua de
+  `lastScannedMessageId` pra frente, so mensagem nova. So comeca se a fase
+  1 nao foi interrompida - se o usuario clicar "Parar" durante o backfill,
+  o chat fica com o backfill parcial e a fase 2 fica pra depois (na
+  proxima vez que passar por esse chat, primeiro termina o backfill antes
+  de seguir pra mensagem nova).
+
+Chat que ja existia de antes dessa funcionalidade (sem `backfillAlvo`
+salvo) assume o pior caso: `backfillAlvo = lastScannedMessageId` salvo e
+`textoCompletoAte = 0`, ou seja, trata como se nenhum texto completo do
+historico tivesse sido salvo ainda. **Efeito colateral conhecido**: o
+unico grupo que o usuario ja tinha completado manualmente com o checkbox
+antigo vai passar por esse backfill mais uma vez (reprocessamento
+redundante, mas inofensivo - so demora um pouco mais na primeira vez que
+esse grupo for escaneado depois dessa mudanca).
+
+A tela de scan (`telaScanner()`) perdeu o checkbox "Reescanear do zero"
+inteiro - nao tem mais nada pra marcar, o backfill acontece sozinho. A
+tabela "O que ja esta salvo" (`renderizarTabelaChats()`) ganhou um terceiro
+estado de badge, "completando historico antigo" (amarelo, como "parcial"),
+pra deixar visivel quando um chat ainda esta nessa fase 1.
+
+## "Mensagem com reacao suficiente nao aparecia no top reacoes" - causa e correcao
+
+O usuario reportou ver mensagens no grupo que claramente tinham reacao
+suficiente pra aparecer em "Ver top reacoes" mas nao apareciam. Causa:
+`telaResultados()` chamava `buscarTop()` com `limite: 50` fixo, sem jeito
+de pedir mais. Com um grupo especifico selecionado isso so corta a cauda
+da lista (mensagens com pouca reacao ficam de fora, esperado). Mas com
+"Todos os grupos" selecionado, `buscarTop()` mistura TODAS as mensagens de
+TODOS os grupos num unico ranking global antes de cortar em 50 - uma
+mensagem de um grupo menos ativo pode ficar fora dos top 50 globais mesmo
+tendo mais reacao que mensagens exibidas de outro grupo mais movimentado.
+Isso ja estava anotado como prioridade alta no backlog ("paginacao em Ver
+top reacoes").
+
+Corrigido: `telaResultados()` agora comeca com `limite: 50` mas tem um
+botao "Mostrar mais" no fim da lista (so aparece quando a lista bateu no
+limite atual) que aumenta o limite em 50 e recarrega. O limite volta pra
+50 toda vez que o filtro de grupo ou o minimo de reacoes muda. Mesma ideia
+que pagina de resultado de busca - carrega sob demanda, nao tudo de uma
+vez.
+
+## Marcar mensagem como "ja visto" (implementado)
+
+Cada mensagem exibida em "Ver top reacoes" e "Buscar mensagens" agora tem
+uma caixinha marcavel (`criarQuadradoMarcavel()`, a mesma tecnica de
+`<div>` desenhado na mao do item anterior - sem depender de aparencia
+nativa de checkbox) que marca o campo `visto: true/false` no registro da
+mensagem, via `marcarVisto(db, key, visto)`. Controle 100% manual do
+usuario, nao mexe em nada automatico - so guarda o estado pra ele
+acompanhar o que ja checou. O item da lista fica com opacidade reduzida
+(0.55) quando marcado como visto, pra destacar visualmente o que ainda nao
+foi olhado. Testado em `test_indexeddb_logic.mjs` (marca, desmarca, chave
+inexistente nao quebra).
 
 ## Pesquisa de reclamacoes comuns do Telegram (p/ identificar melhorias)
 
