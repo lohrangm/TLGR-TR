@@ -217,7 +217,39 @@ foi escrito - vale conferir se o desempenho fica bom em grupos grandes
 (o scan agora grava toda mensagem, nao so as com reacao) e se o backfill
 via "reescanear do zero" funciona como esperado.
 
+## "Reescanear do zero" preso ao modo de grupo unico (corrigido)
+
+O usuario rodou escaneamento de "Todos" esperando que isso desse o texto
+completo das mensagens antigas pra busca por palavra-chave. Na pratica, o
+scan normal so busca mensagem NOVA a partir do `lastScannedMessageId`
+salvo - um grupo que ja estava marcado como totalmente escaneado ANTES da
+busca por palavra-chave existir fica parado nesse checkpoint, entao rodar
+"Todos" de novo so pega as poucas mensagens genuinamente novas (por isso
+pareceu rapido demais e "nao leu nada"). O texto completo das mensagens
+antigas simplesmente nunca foi salvo pra esses grupos, e o scan normal nao
+tem como saber disso sozinho.
+
+A funcao `escanearTudo()` ja aceitava um `reescanearDoZero` que zera esse
+checkpoint pra qualquer chat que o loop processar, independente de
+`apenasChatId` - nao era bug nela. O bug era so na UI: o checkbox
+"Reescanear do zero" (`telaScanner()`) ficava escondido e forcado a `false`
+sempre que "Todos" estava selecionado, entao nao tinha como disparar esse
+comportamento pra mais de um grupo por vez sem fazer manualmente, grupo a
+grupo, pelo seletor. Corrigido: o checkbox agora fica visivel e funciona
+nos dois modos, com o texto do label mudando pra avisar que em "Todos" ele
+reescaneia TODOS os grupos do zero (pode demorar bem mais, repassa o
+historico inteiro de cada um de novo).
+
 ## Backlog (pedido pelo usuario, nao implementado ainda)
+
+- **Marcar mensagem como "ja visto" (manual)**: usuario quer uma caixinha
+  por mensagem, tanto em "Ver top reacoes" quanto em "Buscar mensagens",
+  pra marcar que ja checou aquela mensagem - sem nenhuma logica automatica,
+  so controle manual dele. Ele mesmo disse que acha que e dificil de fazer,
+  mas NAO e: e so um campo booleano (`visto: true/false`) no registro da
+  mensagem + um checkbox na UI que chama `salvarMensagem()` de novo com
+  esse campo atualizado, no mesmo padrao do `concluido` que ja existe pros
+  chats. Prioridade baixa (ele deixou claro que e so pra anotar).
 
 - **Paginacao em "Ver top reacoes"**: hoje `buscarTop()` e chamado com
   `limite: 50` fixo (`telaResultados()`), sem jeito de ver o resto. O

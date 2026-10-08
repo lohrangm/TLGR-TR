@@ -170122,19 +170122,29 @@ store2/dist/store2.js:
         corpo.appendChild(blocoSelecao);
         const selectGrupo = blocoSelecao.querySelector("#trp-select-grupo");
 
+        // Escaneio normal so busca mensagem nova (a partir do checkpoint
+        // salvo) - um grupo que ja estava "completo" antes da busca por
+        // palavra-chave existir fica parado nesse checkpoint e NAO ganha o
+        // texto completo das mensagens antigas sozinho, mesmo rodando
+        // "Todos" de novo. Esse checkbox forca ignorar o checkpoint; com
+        // "Todos" selecionado, vale pra cada grupo que o scan passar.
         const blocoReescanear = document.createElement("div");
-        blocoReescanear.style.cssText = "margin-bottom:10px;display:none;color:#8b92a3;font-size:12px;";
+        blocoReescanear.style.cssText = "margin-bottom:10px;color:#8b92a3;font-size:12px;";
         blocoReescanear.innerHTML =
             '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">' +
             '<input type="checkbox" id="trp-reescanear-zero"> ' +
-            "Reescanear esse grupo do zero (pega o texto completo de mensagens antigas que ainda nao foram salvas, util pra busca)" +
+            '<span id="trp-reescanear-texto">Reescanear do zero</span>' +
             "</label>";
         corpo.appendChild(blocoReescanear);
         const checkboxReescanear = blocoReescanear.querySelector("#trp-reescanear-zero");
-        selectGrupo.addEventListener("change", () => {
-            blocoReescanear.style.display = selectGrupo.value ? "block" : "none";
-            if (!selectGrupo.value) checkboxReescanear.checked = false;
-        });
+        const textoReescanear = blocoReescanear.querySelector("#trp-reescanear-texto");
+        const atualizarTextoReescanear = () => {
+            textoReescanear.textContent = selectGrupo.value
+                ? "Reescanear esse grupo do zero (pega o texto completo de mensagens antigas que ainda nao foram salvas, util pra busca)"
+                : 'Reescanear TODOS os grupos do zero (ignora o progresso salvo de cada um - pode demorar bem mais que o normal, repassa o historico inteiro de novo)';
+        };
+        atualizarTextoReescanear();
+        selectGrupo.addEventListener("change", atualizarTextoReescanear);
 
         carregarGruposParaSelecao()
             .then((grupos) => {
@@ -170186,7 +170196,7 @@ store2/dist/store2.js:
             botaoParar.style.display = "block";
             selectGrupo.disabled = true;
             const apenasChatId = selectGrupo.value || null;
-            const reescanearDoZero = apenasChatId ? checkboxReescanear.checked : false;
+            const reescanearDoZero = checkboxReescanear.checked;
             checkboxReescanear.disabled = true;
             try {
                 await escanearTudo(
