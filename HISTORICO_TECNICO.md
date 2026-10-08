@@ -967,3 +967,63 @@ o protocolo MTProto exige ser participante (ter o access_hash do chat)
 pra sequer pedir uma mensagem de la - nao e uma lacuna de busca, e
 controle de acesso de base do proprio Telegram. no caso dele poder
 acessar implicaria em ser adicionado ao grupo.
+
+## v2026.10.08.8: estrutura do painel refeita (header fixo + area rolavel separada), causa raiz do salto do "Mostrar mais"
+
+A v2026.10.08.7 tentou dois consertos e os dois saíram errados, confirmado
+pelo usuario: a setinha "↑" (movida pra filha de `document.body`) passou a
+aparecer sobreposta em cima do titulo "Top Reacoes" do proprio painel em
+vez de flutuar no canto inferior direito da tela, a setinha "↓" nova ficou
+totalmente invisivel, e o "Mostrar mais" continuou ocasionalmente jogando
+pro topo mesmo com o `restaurarScrollDepoisDoReflow()` (dois
+`requestAnimationFrame` encadeados).
+
+**Causa da setinha errada**: a hipotese (nao 100% confirmavel sem acesso
+ao DOM real do Telegram Web, mas consistente com o sintoma) e que algum
+ancestral de `document.body` na propria pagina do Telegram tem
+`transform`/`filter`/propriedade parecida, o que redefine a base de
+calculo de um `position:fixed` - em vez de ser relativo a viewport real,
+passa a ser relativo a esse ancestral transformado. Botao fixo filho de
+`document.body` ficou refem dessa estrutura, fora do nosso controle.
+
+**Conserto definitivo**: reestruturado `painel` de uma caixa unica com
+`overflow:auto` pra um flex-column com dois andares - o cabecalho
+(`renderizarCabecalho()`, sempre visivel, fora da area de scroll) e uma
+nova `div#trp-area-rolavel` (`overflow:auto;flex:1;min-height:0`), unica
+parte que de fato rola. `corpoDoPainel()` passou a montar `#trp-corpo`
+dentro de `areaRolavel`, nao mais direto em `painel`. As setinhas voltaram
+a ser filhas do proprio `painel` (que tem `position:fixed` confirmado
+funcionando desde sempre), usando `position:absolute` - um absolute usa o
+ancestral posicionado mais proximo como referencia, que e o proprio
+painel, entao fica imune a qualquer coisa estranha que exista mais acima
+na pagina do Telegram. `painel.remove()` continua levando tudo junto
+(area rolavel e os dois botoes), sem precisar remover nada na mao.
+
+**Causa raiz real do salto do "Mostrar mais" (dessa vez resolvida sem
+"restaurar" scroll nenhum)**: tanto `atualizarLista()` (Ver top reacoes)
+quanto `executarBusca()` (Buscar mensagens) reescreviam
+`lista.innerHTML` pra um texto tipo "Carregando..."/"Buscando..." ANTES
+do fetch assincrono (IndexedDB e/ou busca ao vivo no servidor), e so
+reconstruiam a lista cheia depois que os dados chegavam. Entre essas duas
+pontas existe um `await` real (o navegador cede o controle), e nesse
+intervalo ele pode pintar a lista vazia - encolhendo a altura do
+conteudo - e so ai o `scrollTop` da area rolavel acaba clampado/zerado
+por conta propria. Tentar "restaurar" depois (sincrono na v6, com duplo
+`requestAnimationFrame` na v7) as vezes nao bastava porque o salto podia
+acontecer em momentos variaveis do reflow, dependendo de quao pesada era
+a lista nova.
+
+Conserto que elimina o problema na raiz em vez de compensar depois: as
+duas funcoes so mostram "Carregando..."/"Buscando..." quando a lista
+*ja* esta vazia (primeira carga/busca) - em "Mostrar mais" ou troca de
+filtro, o conteudo ANTIGO fica exibido sem nenhuma mudanca ate os dados
+novos estarem prontos. O conteudo novo e montado inteiro num
+`DocumentFragment` fora da tela (nenhum filho de `lista` chega a mudar
+durante isso); so no final e que `lista.innerHTML = ""` seguido de
+`lista.appendChild(novoConteudo)` acontece, sincrono, sem nenhum `await`
+no meio. O navegador nunca chega a pintar um estado intermediario vazio,
+entao nunca existe scroll nenhum pra clampar ou restaurar -
+`restaurarScrollDepoisDoReflow()` e o guardar/restaurar `painel.scrollTop`
+foram removidos, ficaram sem uso.
+
+Versao 2026.10.08.8.

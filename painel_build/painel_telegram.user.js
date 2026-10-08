@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.08.7
+// @version      2026.10.08.8
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -169484,7 +169484,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.08.7";
+window.TRP_VERSAO = "2026.10.08.8";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
@@ -169533,6 +169533,7 @@ window.TRP_VERSAO = "2026.10.08.7";
 
     let cliente = null; // instancia conectada, reaproveitada entre aberturas do painel
     let painel = null;
+    let areaRolavel = null; // unico filho de painel que de fato rola - ver montarPainel()
     let bancoPromessa = null;
     let scanEmAndamento = false;
     let cancelarScanSolicitado = false;
@@ -169849,14 +169850,17 @@ window.TRP_VERSAO = "2026.10.08.7";
 
     function alternarPainel() {
         if (painel) {
-            painel.remove();
-            removerBotoesNavegacao();
+            painel.remove(); // leva areaRolavel e os botoes de navegacao junto, todos filhos dele
             painel = null;
+            areaRolavel = null;
             return;
         }
         montarPainel();
     }
 
+    // O painel agora e so a caixa fixa (header + area com scroll proprio
+    // dentro dela) - ver comentario de adicionarBotoesNavegacao() sobre o
+    // motivo dessa separacao existir.
     function montarPainel() {
         painel = document.createElement("div");
         Object.assign(painel.style, {
@@ -169865,7 +169869,9 @@ window.TRP_VERSAO = "2026.10.08.7";
             right: "24px",
             width: "420px",
             maxHeight: "80vh",
-            overflow: "auto",
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
             background: "#171a21",
             color: "#e6e8ec",
             border: "1px solid #2a2f3a",
@@ -169878,27 +169884,43 @@ window.TRP_VERSAO = "2026.10.08.7";
         });
         document.body.appendChild(painel);
         renderizarCabecalho();
+
+        // Unico filho de painel que de fato rola - "flex:1;min-height:0" e
+        // o jeito padrao de fazer um filho de flex-column encolher e ganhar
+        // scroll proprio em vez de estourar o pai. Com isso, o cabecalho
+        // fica sempre visivel (fora da area rolavel) e os botoes de
+        // navegacao (filhos de painel, nao de areaRolavel) nunca ficam
+        // tampados pelo conteudo nem precisam fugir do painel pra escapar
+        // de corte nenhum.
+        areaRolavel = document.createElement("div");
+        areaRolavel.id = "trp-area-rolavel";
+        areaRolavel.style.cssText = "overflow:auto;flex:1;min-height:0;";
+        painel.appendChild(areaRolavel);
+
         adicionarBotoesNavegacao();
         decidirTela();
     }
 
-    // Botoes flutuantes fixos na tela pra ir direto pro topo ou pro fim da
-    // lista, sem arrastar o mouse rolando - util em listas longas de
-    // resultado. Anexados direto no document.body, NAO no painel: o
-    // painel tem overflow:auto, e um "position:fixed" filho de um
-    // ancestral com overflow diferente de visible fica cortado pelos
-    // limites desse ancestral (clipping segue o DOM, independente da
-    // posicao calculada ser relativa a viewport) - isso deixava a setinha
-    // de voltar ao topo praticamente invisivel na maioria dos tamanhos de
-    // janela (so aparecia se o painel fosse baixo o bastante pra sobrar
-    // espaco depois do fim dele). Por nao serem mais filhos do painel,
-    // "painel.remove()" (fechar o painel) nao leva eles junto - por isso
-    // alternarPainel() remove os dois na mao ao fechar.
+    // Botoes flutuantes (voltar ao topo / ir pro fim) da area de
+    // resultado, sem precisar arrastar o mouse rolando. Sao filhos do
+    // PAINEL (posicionados com position:absolute, ancorados no canto
+    // inferior direito dele - painel tem position:fixed, entao serve de
+    // referencia pra esse absolute), nao filhos de areaRolavel nem do
+    // document.body:
+    // - filho de areaRolavel rolaria junto com o conteudo (sumiria de
+    //   vista ao rolar pra baixo).
+    // - filho do document.body com position:fixed foi tentado antes e
+    //   saiu errado: o Telegram Web pode ter algum ancestral com
+    //   transform/filter la em cima que muda a base de calculo de um
+    //   "fixed", fazendo o botao aparecer em qualquer canto da pagina real
+    //   em vez do canto do NOSSO painel.
+    // Como filho do painel, painel.remove() leva os dois junto - nao
+    // precisa remover na mao ao fechar.
     function adicionarBotoesNavegacao() {
         const estiloBase = {
-            position: "fixed",
-            right: "34px",
-            zIndex: 1000000,
+            position: "absolute",
+            right: "16px",
+            zIndex: 1,
             width: "32px",
             height: "32px",
             borderRadius: "50%",
@@ -169912,47 +169934,22 @@ window.TRP_VERSAO = "2026.10.08.7";
         };
 
         const botaoTopo = document.createElement("button");
-        botaoTopo.id = "trp-ir-topo";
         botaoTopo.textContent = "↑";
         botaoTopo.title = "Voltar ao topo";
-        Object.assign(botaoTopo.style, estiloBase, { bottom: "62px" });
+        Object.assign(botaoTopo.style, estiloBase, { bottom: "56px" });
         botaoTopo.addEventListener("click", () => {
-            painel.scrollTop = 0;
+            areaRolavel.scrollTop = 0;
         });
-        document.body.appendChild(botaoTopo);
+        painel.appendChild(botaoTopo);
 
         const botaoFim = document.createElement("button");
-        botaoFim.id = "trp-ir-fim";
         botaoFim.textContent = "↓";
         botaoFim.title = "Ir pro fim";
-        Object.assign(botaoFim.style, estiloBase, { bottom: "24px" });
+        Object.assign(botaoFim.style, estiloBase, { bottom: "16px" });
         botaoFim.addEventListener("click", () => {
-            painel.scrollTop = painel.scrollHeight;
+            areaRolavel.scrollTop = areaRolavel.scrollHeight;
         });
-        document.body.appendChild(botaoFim);
-    }
-
-    function removerBotoesNavegacao() {
-        const topo = document.getElementById("trp-ir-topo");
-        const fim = document.getElementById("trp-ir-fim");
-        if (topo) topo.remove();
-        if (fim) fim.remove();
-    }
-
-    // Restaura painel.scrollTop depois que o navegador terminar de
-    // recalcular o layout da lista recem-recarregada. Atribuir o valor
-    // logo em seguida ao await (sincrono) costuma funcionar, mas, com
-    // bastante item novo de uma vez, o reflow pode nao ter terminado ainda
-    // nesse instante, e o navegador acaba grudando o scroll num valor
-    // errado de qualquer forma. Dois requestAnimationFrame seguidos (em
-    // vez de so atribuir direto) garante que isso rode so depois de pelo
-    // menos um ciclo completo de layout+pintura.
-    function restaurarScrollDepoisDoReflow(valor) {
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                painel.scrollTop = valor;
-            });
-        });
+        painel.appendChild(botaoFim);
     }
 
     function renderizarCabecalho() {
@@ -170020,11 +170017,11 @@ window.TRP_VERSAO = "2026.10.08.7";
     }
 
     function corpoDoPainel() {
-        let corpo = painel.querySelector("#trp-corpo");
+        let corpo = areaRolavel.querySelector("#trp-corpo");
         if (!corpo) {
             corpo = document.createElement("div");
             corpo.id = "trp-corpo";
-            painel.appendChild(corpo);
+            areaRolavel.appendChild(corpo);
         }
         corpo.innerHTML = "";
         return corpo;
@@ -170734,7 +170731,21 @@ window.TRP_VERSAO = "2026.10.08.7";
         let limiteAtual = 50;
 
         async function atualizarLista() {
-            lista.innerHTML = '<div style="color:#8b92a3;">Carregando...</div>';
+            // So mostra "Carregando..." quando a lista esta mesmo vazia (
+            // primeira carga). Em "Mostrar mais" ou troca de filtro ja tem
+            // conteudo antigo na tela - ele fica exibido sem mudanca ate os
+            // dados novos chegarem, e so entao o conteudo e trocado tudo de
+            // uma vez (sem await no meio). Antes disso aqui reescrevia
+            // lista.innerHTML pra "Carregando..." antes do await: o
+            // navegador tinha a chance de pintar essa lista vazia e
+            // recalcular/zerar o scroll do painel antes da funcao
+            // retomar - restaurar o scroll depois (mesmo com
+            // requestAnimationFrame) nao bastava porque o salto ja tinha
+            // acontecido. Nao esvaziar a lista enquanto busca elimina o
+            // problema na raiz, em vez de tentar compensar depois.
+            if (!lista.childNodes.length) {
+                lista.innerHTML = '<div style="color:#8b92a3;">Carregando...</div>';
+            }
             const chatId = selectGrupo.value || null;
             const minimo = parseInt(inputMinimo.value, 10) || 1;
             const mensagens = await buscarTop(db, { chatId, minimo, limite: limiteAtual });
@@ -170742,7 +170753,8 @@ window.TRP_VERSAO = "2026.10.08.7";
                 lista.innerHTML = '<div style="color:#8b92a3;">Nenhuma mensagem encontrada com esse filtro.</div>';
                 return;
             }
-            lista.innerHTML = "";
+
+            const novoConteudo = document.createDocumentFragment();
             for (const m of mensagens) {
                 const item = document.createElement("div");
                 item.style.cssText =
@@ -170775,20 +170787,20 @@ window.TRP_VERSAO = "2026.10.08.7";
                     window.open(url, "_blank");
                 });
                 item.appendChild(conteudo);
-                lista.appendChild(item);
+                novoConteudo.appendChild(item);
             }
+
+            // Troca tudo de uma vez, sem await entre o esvaziar e o
+            // repopular - o navegador nunca chega a pintar um estado vazio
+            // no meio do caminho.
+            lista.innerHTML = "";
+            lista.appendChild(novoConteudo);
 
             if (mensagens.length >= limiteAtual) {
                 const botaoMais = botaoAcao(lista, "Mostrar mais");
-                // Mesmo problema e mesmo conserto do "Mostrar mais" da tela
-                // de busca: a lista esvaziar por um instante durante o
-                // "Carregando..." faz o navegador zerar o scroll do painel
-                // sozinho, entao guarda e restaura na mao.
                 botaoMais.addEventListener("click", async () => {
-                    const scrollAnterior = painel.scrollTop;
                     limiteAtual += 50;
                     await atualizarLista();
-                    restaurarScrollDepoisDoReflow(scrollAnterior);
                 });
             }
         }
@@ -170984,7 +170996,15 @@ window.TRP_VERSAO = "2026.10.08.7";
                 lista.innerHTML = '<div style="color:#8b92a3;">Digita algo pra buscar.</div>';
                 return;
             }
-            lista.innerHTML = '<div style="color:#8b92a3;">Buscando...</div>';
+            // So mostra "Buscando..." quando a lista ja esta vazia (primeira
+            // busca desse termo). Em "Mostrar mais" a lista ja tem
+            // resultado anterior na tela - fica do jeito que esta, sem
+            // piscar pra vazio, ate os dados novos chegarem prontos pra
+            // trocar tudo de uma vez (ver comentario mais abaixo, perto do
+            // "Mostrar mais").
+            if (!lista.childNodes.length) {
+                lista.innerHTML = '<div style="color:#8b92a3;">Buscando...</div>';
+            }
             const chatId = selectGrupo.value || null;
             const minimo = parseInt(inputMinimo.value, 10) || 0;
             const ordenarPor = selectOrdenar.value;
@@ -171040,23 +171060,32 @@ window.TRP_VERSAO = "2026.10.08.7";
                     : '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>';
                 return;
             }
-            lista.innerHTML = "";
+            // Monta tudo num fragmento fora da tela primeiro, e so troca o
+            // conteudo real da lista no final, de uma vez (sem await no
+            // meio). Antes disso aqui fazia lista.innerHTML = "" e ia
+            // enchendo lista aos poucos - no "Mostrar mais" isso fazia a
+            // lista ficar vazia (encolhendo o painel) bem no instante em
+            // que o navegador podia pintar/recalcular o scroll, travando-o
+            // em 0 antes do conteudo novo terminar de entrar. Com o
+            // fragmento, a lista antiga fica exibida sem mudanca ate o
+            // ultimo instante - nunca existe um estado vazio pro navegador
+            // pintar, entao o scroll nunca precisa ser restaurado.
+            const novoConteudo = document.createDocumentFragment();
 
             if (erroServidor) {
-                lista.insertAdjacentHTML(
-                    "beforeend",
-                    '<div style="color:#ff6b6b;font-size:11px;margin-bottom:6px;">Busca ao vivo no servidor falhou (' +
-                        escapeHtml(erroServidor) +
-                        ") - resultado abaixo e so o local.</div>"
-                );
+                const aviso = document.createElement("div");
+                aviso.style.cssText = "color:#ff6b6b;font-size:11px;margin-bottom:6px;";
+                aviso.textContent =
+                    "Busca ao vivo no servidor falhou (" + erroServidor + ") - resultado abaixo e so o local.";
+                novoConteudo.appendChild(aviso);
             }
             if (novasDoServidor.length) {
-                lista.insertAdjacentHTML(
-                    "beforeend",
-                    '<div style="color:#5ec26a;font-size:11px;margin-bottom:6px;">' +
-                        novasDoServidor.length +
-                        " mensagem(ns) achada(s) ao vivo no servidor que nao estavam salvas local - ja salvei agora.</div>"
-                );
+                const aviso = document.createElement("div");
+                aviso.style.cssText = "color:#5ec26a;font-size:11px;margin-bottom:6px;";
+                aviso.textContent =
+                    novasDoServidor.length +
+                    " mensagem(ns) achada(s) ao vivo no servidor que nao estavam salvas local - ja salvei agora.";
+                novoConteudo.appendChild(aviso);
             }
 
             const maisDeUmGrupo = !chatId && todasAsMensagens.some((m) => m.chatId !== todasAsMensagens[0].chatId);
@@ -171069,27 +171098,22 @@ window.TRP_VERSAO = "2026.10.08.7";
                         containerItens.style.display = estaAberto ? "none" : "block";
                         seta.textContent = estaAberto ? "▸" : "▾";
                     });
-                    lista.appendChild(cabecalho);
-                    lista.appendChild(containerItens);
+                    novoConteudo.appendChild(cabecalho);
+                    novoConteudo.appendChild(containerItens);
                     for (const m of grupo.itens) containerItens.appendChild(criarItemResultado(m));
                 }
             } else {
-                for (const m of todasAsMensagens) lista.appendChild(criarItemResultado(m));
+                for (const m of todasAsMensagens) novoConteudo.appendChild(criarItemResultado(m));
             }
+
+            lista.innerHTML = "";
+            lista.appendChild(novoConteudo);
 
             if (mensagens.length >= limiteAtual) {
                 const botaoMais = botaoAcao(lista, "Mostrar mais");
-                // "Buscando..." esvazia a lista por um instante, encolhendo a
-                // altura do painel - como ele tem scroll proprio
-                // (overflow:auto), o navegador trava o scrollTop em 0
-                // sozinho nesse instante, e nao volta pra onde estava quando
-                // a lista cheia volta a aparecer. Guarda e restaura na mao
-                // pra nao jogar o usuario pro topo a cada "Mostrar mais".
                 botaoMais.addEventListener("click", async () => {
-                    const scrollAnterior = painel.scrollTop;
                     limiteAtual += 100;
                     await executarBusca();
-                    restaurarScrollDepoisDoReflow(scrollAnterior);
                 });
             }
         }
