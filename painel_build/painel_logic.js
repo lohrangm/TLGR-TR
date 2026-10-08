@@ -160,7 +160,16 @@
     // informados), ate juntar "limite" resultados. Filtro de data aqui e so
     // visual/de recorte, igual ao de buscarTexto() - nao afeta o que fica
     // salvo, so o que aparece nesta lista.
-    function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte }) {
+    //
+    // ordenarPor="data" usa um caminho BEM mais caro (buscarTopPorData, logo
+    // abaixo) - esse aqui (o padrao, ordenarPor="reacoes" ou omitido) e
+    // rapido porque o indice ja vem ordenado por reacoes: da pra parar assim
+    // que acha um valor abaixo do minimo, sem visitar o resto. Ordenar por
+    // data perde essa vantagem (ver comentario em buscarTopPorData).
+    function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte, ordenarPor }) {
+        if (ordenarPor === "data") {
+            return buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte });
+        }
         return new Promise((resolve, reject) => {
             const resultados = [];
             const indice = transacao(db, "mensagens", "readonly").index("por_reacoes");
@@ -182,6 +191,42 @@
                 const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
                 const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
                 if ((!chatId || valor.chatId === chatId) && bateData) {
+                    resultados.push(valor);
+                }
+                cursor.continue();
+            };
+            pedido.onerror = () => reject(pedido.error);
+        });
+    }
+
+    // Mesmo filtro de buscarTop(), mas ordenado por data (mais recente
+    // primeiro) em vez de reacoes. Sem indice por data, entao nao da pra usar
+    // o truque de "parar assim que passar do minimo" (o indice por_reacoes
+    // nao esta em ordem de data) - percorre tudo que bater com chat/periodo
+    // ate uma trava de seguranca, junta num array e so ai ordena e corta pro
+    // "limite". Mais caro que o caminho padrao, principalmente com "Todos os
+    // grupos" e minimo baixo (quase toda mensagem bate) - mesma trava
+    // (LIMITE_VISITAS) e mesmo espirito do full-scan que buscarTexto() ja
+    // fazia pra busca por palavra-chave.
+    function buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte }) {
+        return new Promise((resolve, reject) => {
+            const resultados = [];
+            let visitados = 0;
+            const LIMITE_VISITAS = 50000;
+            const loja = transacao(db, "mensagens", "readonly");
+            const pedido = chatId ? loja.index("por_chat").openCursor(IDBKeyRange.only(chatId)) : loja.openCursor();
+            pedido.onsuccess = () => {
+                const cursor = pedido.result;
+                if (!cursor || visitados >= LIMITE_VISITAS) {
+                    resultados.sort((a, b) => (a.dateUtc < b.dateUtc ? 1 : -1));
+                    resolve(resultados.slice(0, limite));
+                    return;
+                }
+                visitados++;
+                const valor = cursor.value;
+                const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
+                const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
+                if ((valor.reactionTotal || 0) >= minimo && bateData) {
                     resultados.push(valor);
                 }
                 cursor.continue();
@@ -297,6 +342,54 @@
     function textoCompleto(mensagem) {
         const texto = (mensagem.message || "").trim().replace(/\s+/g, " ");
         return texto || "[midia ou mensagem sem texto]";
+    }
+
+    // Acha links t.me num texto - tanto de @usuario (t.me/nome) quanto de
+    // convite por hash (t.me/joinchat/XXX ou t.me/+XXX). Usado pelo filtro
+    // "links de grupo" da Busca avancada (telaBuscaAvancada), pra oferecer
+    // verificar se o link ainda e valido em vez do usuario precisar clicar
+    // em cada um pra descobrir. new RegExp() a cada chamada (em vez de um
+    // regex /g compartilhado no modulo) de proposito - regex com /g guarda
+    // posicao entre chamadas (lastIndex), e reusar o mesmo objeto entre
+    // mensagens diferentes e um jeito classico de perder ou duplicar match
+    // por engano.
+    function extrairLinksTelegram(texto) {
+        const links = [];
+        if (!texto) return links;
+        const regex = /(?:https?:\/\/)?t\.me\/(\+|joinchat\/)?([a-zA-Z0-9_]{3,})/g;
+        let m;
+        while ((m = regex.exec(texto))) {
+            links.push({ ehConvite: !!m[1], valor: m[2] });
+        }
+        return links;
+    }
+
+    // Confere se um link de grupo/canal ainda e valido SEM abrir nada no
+    // navegador - link de @usuario usa contacts.ResolveUsername (o usuario
+    // ainda existe?), link de convite por hash usa messages.CheckChatInvite
+    // (o hash ainda e valido? convite pode ser revogado ou expirar). Os dois
+    // dao erro RPC (USERNAME_NOT_OCCUPIED/USERNAME_INVALID,
+    // INVITE_HASH_EXPIRED/INVITE_HASH_INVALID) quando o link nao presta mais -
+    // e isso que vira "invalido" aqui, nao um campo separado na resposta.
+    async function verificarLinkTelegram(link) {
+        try {
+            if (link.ehConvite) {
+                const resultado = await cliente.invoke(new Api.messages.CheckChatInvite({ hash: link.valor }));
+                const titulo = resultado.title || (resultado.chat && resultado.chat.title) || null;
+                const participantes =
+                    typeof resultado.participantsCount === "number" ? resultado.participantsCount : null;
+                return { valido: true, titulo, participantes };
+            }
+            const resultado = await cliente.invoke(new Api.contacts.ResolveUsername({ username: link.valor }));
+            const chat = (resultado.chats && resultado.chats[0]) || null;
+            return {
+                valido: true,
+                titulo: chat ? chat.title : null,
+                participantes: chat && typeof chat.participantsCount === "number" ? chat.participantsCount : null,
+            };
+        } catch (erro) {
+            return { valido: false, erro: erro && erro.message ? erro.message : String(erro) };
+        }
     }
 
     function truncar(texto, tamanho) {
@@ -838,9 +931,14 @@
 
     function botaoVoltar(corpo) {
         const botao = document.createElement("button");
-        botao.textContent = "< Voltar";
+        botao.textContent = "← Voltar";
+        // Antes era texto puro sem fundo nem borda (font-size:12px) - dificil
+        // de identificar rapido entre o resto da tela. Agora tem contorno e
+        // area de clique maior, continua discreto (sem cor de destaque igual
+        // os botoes de acao) mas facil de achar.
         botao.style.cssText =
-            "background:none;border:none;color:#8b92a3;cursor:pointer;font-size:12px;margin-bottom:10px;padding:0;";
+            "background:#0c0e12;border:1px solid #2a2f3a;border-radius:6px;color:#c7cbd4;cursor:pointer;" +
+            "font-size:13px;font-weight:600;margin-bottom:12px;padding:6px 12px;";
         botao.addEventListener("click", () => telaLogado());
         corpo.appendChild(botao);
         return botao;
@@ -1297,10 +1395,14 @@
         const filtros = document.createElement("div");
         filtros.style.cssText = "display:flex;gap:8px;margin-bottom:10px;";
         filtros.innerHTML =
-            '<select id="trp-filtro-grupo" style="flex:1;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
+            '<select id="trp-filtro-grupo" style="flex:2;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
             '<option value="">Todos os grupos</option>' +
             "</select>" +
-            '<input id="trp-filtro-minimo" type="number" min="1" value="1" style="width:60px;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">';
+            '<select id="trp-filtro-ordenar" style="flex:1;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
+            '<option value="reacoes">Mais reacoes</option>' +
+            '<option value="data">Mais recentes</option>' +
+            "</select>" +
+            '<input id="trp-filtro-minimo" type="number" min="1" value="1" style="width:56px;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">';
         corpo.appendChild(filtros);
 
         const selectGrupo = filtros.querySelector("#trp-filtro-grupo");
@@ -1310,6 +1412,7 @@
             opcao.textContent = (c.chatTitle || c.chatId) + " (ate msg " + (c.lastScannedMessageId || 0) + ")";
             selectGrupo.appendChild(opcao);
         }
+        const selectOrdenar = filtros.querySelector("#trp-filtro-ordenar");
         const inputMinimo = filtros.querySelector("#trp-filtro-minimo");
 
         // Mesmo filtro de periodo de "Buscar mensagens" - replicado aqui
@@ -1325,6 +1428,17 @@
         corpo.appendChild(filtrosData);
         const inputDataDe = filtrosData.querySelector("#trp-top-data-de");
         const inputDataAte = filtrosData.querySelector("#trp-top-data-ate");
+
+        // Indicador de carregamento SEPARADO da lista - desde que
+        // atualizarLista() parou de esvaziar "lista" durante o
+        // recarregamento (pra nao causar o salto de scroll), trocar de
+        // filtro ou clicar "Mostrar mais" ficou sem nenhum sinal visivel de
+        // que algo esta acontecendo enquanto o resultado anterior continua
+        // na tela - podia parecer que travou. Esse texto muda sozinho, nunca
+        // toca em "lista", entao nao reintroduz o problema de scroll.
+        const statusCarregando = document.createElement("div");
+        statusCarregando.style.cssText = "color:#8b92a3;font-size:11px;min-height:14px;margin-bottom:4px;";
+        corpo.appendChild(statusCarregando);
 
         const lista = document.createElement("div");
         corpo.appendChild(lista);
@@ -1358,11 +1472,14 @@
             if (!lista.childNodes.length) {
                 lista.innerHTML = '<div style="color:#8b92a3;">Carregando...</div>';
             }
+            statusCarregando.textContent = "Carregando...";
             const chatId = selectGrupo.value || null;
             const minimo = parseInt(inputMinimo.value, 10) || 1;
             const dataDe = inputDataDe.value || null;
             const dataAte = inputDataAte.value || null;
-            const mensagens = await buscarTop(db, { chatId, minimo, limite: limiteAtual, dataDe, dataAte });
+            const ordenarPor = selectOrdenar.value;
+            const mensagens = await buscarTop(db, { chatId, minimo, limite: limiteAtual, dataDe, dataAte, ordenarPor });
+            statusCarregando.textContent = "";
             if (!mensagens.length) {
                 lista.innerHTML = '<div style="color:#8b92a3;">Nenhuma mensagem encontrada com esse filtro.</div>';
                 return;
@@ -1420,6 +1537,10 @@
         }
 
         selectGrupo.addEventListener("change", () => {
+            limiteAtual = 50;
+            atualizarLista();
+        });
+        selectOrdenar.addEventListener("change", () => {
             limiteAtual = 50;
             atualizarLista();
         });
@@ -1533,6 +1654,15 @@
 
         const botaoBuscar = botaoAcao(corpo, "Buscar");
 
+        // Ver comentario igual em telaResultados() - indicador separado da
+        // lista, pra trocar de termo/filtro continuar com algum sinal visual
+        // de "carregando" mesmo que o resultado anterior fique exibido sem
+        // mudanca ate o novo chegar (de propostio, pra nao repetir o salto de
+        // scroll que existia antes).
+        const statusCarregando = document.createElement("div");
+        statusCarregando.style.cssText = "color:#8b92a3;font-size:11px;min-height:14px;margin-bottom:4px;";
+        corpo.appendChild(statusCarregando);
+
         const lista = document.createElement("div");
         corpo.appendChild(lista);
 
@@ -1634,15 +1764,30 @@
                 lista.innerHTML = '<div style="color:#8b92a3;">Digita algo pra buscar.</div>';
                 return;
             }
-            // So mostra "Buscando..." quando a lista ja esta vazia (primeira
-            // busca desse termo). Em "Mostrar mais" a lista ja tem
-            // resultado anterior na tela - fica do jeito que esta, sem
-            // piscar pra vazio, ate os dados novos chegarem prontos pra
-            // trocar tudo de uma vez (ver comentario mais abaixo, perto do
-            // "Mostrar mais").
+            // So mostra "Buscando..." na propria lista quando ela ja esta
+            // vazia (primeira busca desse termo). Em "Mostrar mais" ou troca
+            // de termo/filtro a lista ja tem resultado anterior na tela -
+            // fica do jeito que esta, sem piscar pra vazio, ate os dados
+            // novos chegarem prontos pra trocar tudo de uma vez (ver
+            // comentario mais abaixo, perto do "Mostrar mais"). Isso faz o
+            // "esta buscando" sumir visualmente nesses casos - statusCarregando
+            // (elemento separado, nunca esvaziado por engano) cobre esse
+            // aviso em todo clique de busca, inclusive quando a busca ao
+            // vivo no servidor (mais lenta, round-trip de rede de verdade)
+            // deixa a tela "parada" por um tempo sem nenhum sinal.
             if (!lista.childNodes.length) {
                 lista.innerHTML = '<div style="color:#8b92a3;">Buscando...</div>';
             }
+            statusCarregando.textContent = "Buscando...";
+            try {
+                await executarBuscaPorDentro();
+            } finally {
+                statusCarregando.textContent = "";
+            }
+        }
+
+        async function executarBuscaPorDentro() {
+            const termo = campoBusca.value.trim();
             const chatId = selectGrupo.value || null;
             const minimo = parseInt(inputMinimo.value, 10) || 0;
             const ordenarPor = selectOrdenar.value;
@@ -1807,7 +1952,7 @@
         const aviso = document.createElement("div");
         aviso.style.cssText = "color:#8b92a3;margin-bottom:10px;";
         aviso.textContent =
-            'Busca GLOBAL do proprio Telegram em canais/supergrupos PUBLICOS que essa conta nao participa (grupo fechado nao e alcancado). Segundo o proprio blog do Telegram (ago/2025), esse recurso "e inicialmente disponivel so pra contas Premium" - na pratica (testado aqui), isso parece valer so pro modo de TEXTO LIVRE: busca por HASHTAG funciona mesmo sem Premium, so a por texto livre falha com erro de conta Premium exigida. Com Premium, o texto livre ainda tem uma cota diaria gratis e depois cobra em Telegram Stars (a busca por hashtag, pelo visto, nao tem esse custo documentado).';
+            'Busca GLOBAL do proprio Telegram em canais/supergrupos que tem (ou tiveram) um @usuario PUBLICO, mesmo que essa conta nao participe deles - "publico" aqui e so isso, nao tem nada a ver com o grupo exigir aprovacao pra alguem entrar: um grupo pode pedir aprovacao de novo membro e mesmo assim aparecer aqui, porque ler/buscar nao exige ser membro, so mandar mensagem exige. Grupo sem @usuario nenhum (so com link de convite) nunca aparece aqui - precisaria ter entrado nele pra alcancar o conteudo (ver tela de "Buscar mensagens"). Segundo o proprio blog do Telegram (ago/2025), esse recurso "e inicialmente disponivel so pra contas Premium" - a documentacao oficial do metodo (core.telegram.org/method/channels.searchPosts) descreve a cota diaria gratis e o pagamento em Stars como algo que vale so pra "full text post searches (query)", sem mencionar nada parecido pra busca por hashtag; bate com o que foi testado aqui (busca por HASHTAG funcionou sem Premium, por TEXTO LIVRE deu erro de conta Premium exigida).';
         corpo.appendChild(aviso);
 
         const statusCota = document.createElement("div");
@@ -1840,11 +1985,77 @@
         blocoModo.appendChild(labelModo);
         corpo.appendChild(blocoModo);
 
+        // Extrai link t.me (de @usuario ou de convite) do TEXTO das mensagens
+        // encontradas e confere se cada um ainda e valido - serve pra quem
+        // esta procurando grupo/canal relacionado a um assunto (a palavra-
+        // chave) sem precisar clicar em cada link achado so pra descobrir se
+        // ainda existe. Mais lento (uma chamada de API por link novo), por
+        // isso opcional.
+        const blocoLinks = document.createElement("div");
+        blocoLinks.style.cssText = "display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;font-size:12px;";
+        const checkboxLinks = criarQuadradoMarcavel(false, null);
+        const labelLinks = document.createElement("span");
+        labelLinks.textContent =
+            "Tambem extrair e verificar link de grupo/canal (t.me/...) mencionado no texto dos resultados - mais lento, uma checagem por link novo";
+        blocoLinks.appendChild(checkboxLinks.elemento);
+        blocoLinks.appendChild(labelLinks);
+        corpo.appendChild(blocoLinks);
+
         const campoBusca = campoTexto(corpo, "Palavra-chave (texto livre) ou hashtag", "text");
         const botaoBuscar = botaoAcao(corpo, "Buscar globalmente");
 
         const lista = document.createElement("div");
         corpo.appendChild(lista);
+
+        const tituloLinks = document.createElement("div");
+        tituloLinks.style.cssText = "color:#8b92a3;margin:14px 0 6px;font-weight:600;display:none;";
+        tituloLinks.textContent = "Links de grupo/canal encontrados nos resultados:";
+        corpo.appendChild(tituloLinks);
+
+        const listaLinks = document.createElement("div");
+        corpo.appendChild(listaLinks);
+
+        // valor (hash ou username, em minusculo) -> elemento <div> ja criado
+        // pra esse link - impede verificar ou listar o mesmo link duas vezes
+        // quando ele aparece em mais de uma mensagem ou reaparece numa pagina
+        // seguinte ("Carregar mais").
+        const linksVistos = new Map();
+
+        function processarLinksDaMensagem(texto) {
+            for (const link of extrairLinksTelegram(texto)) {
+                const chave = (link.ehConvite ? "convite:" : "usuario:") + link.valor.toLowerCase();
+                if (linksVistos.has(chave)) continue;
+
+                const item = document.createElement("div");
+                item.style.cssText = "padding:6px 0;border-bottom:1px solid #2a2f3a;font-size:12px;";
+                item.textContent = "t.me/" + (link.ehConvite ? "+" : "") + link.valor + " - verificando...";
+                listaLinks.appendChild(item);
+                linksVistos.set(chave, item);
+                tituloLinks.style.display = "block";
+
+                verificarLinkTelegram(link).then((resultado) => {
+                    const enderecoLink = "t.me/" + (link.ehConvite ? "+" : "") + link.valor;
+                    if (resultado.valido) {
+                        const detalhes = [];
+                        if (resultado.titulo) detalhes.push(escapeHtml(resultado.titulo));
+                        if (resultado.participantes != null) detalhes.push(resultado.participantes + " participantes");
+                        item.innerHTML =
+                            '<span style="color:#5ec26a;">valido</span> - ' +
+                            escapeHtml(enderecoLink) +
+                            (detalhes.length ? " (" + detalhes.join(", ") + ")" : "") +
+                            ' <span style="color:#4da3ff;cursor:pointer;" class="trp-abrir-link">abrir</span>';
+                        item.querySelector(".trp-abrir-link").addEventListener("click", () => {
+                            window.open("https://" + enderecoLink, "_blank");
+                        });
+                    } else {
+                        item.innerHTML =
+                            '<span style="color:#ff6b6b;">invalido ou expirado</span> - ' +
+                            escapeHtml(enderecoLink) +
+                            ' <span style="color:#8b92a3;font-size:11px;">(' + escapeHtml(resultado.erro || "") + ")</span>";
+                    }
+                });
+            }
+        }
 
         // Pagina do jeito que a doc da API manda: offsetRate = nextRate da
         // pagina anterior (ou a data da ultima mensagem, se nextRate nao
@@ -1916,6 +2127,11 @@
                 for (const c of resultado.chats || []) chatsPorId.set(String(c.id), c);
 
                 if (!continuar) lista.innerHTML = "";
+                if (!continuar) {
+                    listaLinks.innerHTML = "";
+                    linksVistos.clear();
+                    tituloLinks.style.display = "none";
+                }
                 const botaoAntigo = lista.querySelector(".trp-carregar-mais");
                 if (botaoAntigo) botaoAntigo.remove();
 
@@ -1935,6 +2151,7 @@
 
                 for (const m of mensagens) {
                     lista.appendChild(criarItemResultadoGlobal(m, chatsPorId));
+                    if (checkboxLinks.checked) processarLinksDaMensagem(m.message);
                 }
 
                 const ultima = mensagens[mensagens.length - 1];

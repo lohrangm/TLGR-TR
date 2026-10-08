@@ -1148,4 +1148,82 @@ desnecessario. O mapa e calculado uma vez e reaproveitado em todas as
 chamadas da mesma abertura de tela; so recalcula no final de um scan
 (a tabela final precisa refletir o scan que acabou de rodar).
 
+## v2026.10.08.12: ordenacao por data em "Ver top reacoes", indicador de carregamento, botao voltar maior, texto de "Busca avancada" revisado, buscador de link de grupo
+
+Cinco pedidos encaixados numa entrega so:
+
+**1. Selecionar ordenacao (reacoes x data) em "Ver top reacoes".** O
+indice `por_reacoes` so serve pra ordenar por quantidade de reacoes -
+nao existe indice por `dateUtc` no banco. Criada `buscarTopPorData()`:
+percorre tudo que bate com chat/periodo/minimo ate a mesma trava de
+seguranca (`LIMITE_VISITAS = 50000`) ja usada em `buscarTexto()`, junta
+num array e so ai ordena por data e corta pro `limite` - mesmo espirito
+do full-scan que a busca por palavra-chave ja fazia, nao tem outro jeito
+sem indice novo. `buscarTop()` virou um dispatcher: com
+`ordenarPor: "data"` chama `buscarTopPorData()`, caso contrario segue o
+caminho rapido de sempre (cursor no indice, para assim que passa do
+minimo). Mais caro que o caminho padrao, principalmente com "Todos os
+grupos" e minimo baixo (quase toda mensagem bate) - mas e o preco de
+ordenar por algo sem indice.
+
+**2. Indicador visual de carregamento.** Trocar o termo de busca e
+deixar sem feedback visual enquanto a consulta roda da sensacao de
+"travado". Adicionado um elemento `statusCarregando` separado da
+`lista` de resultados em ambas as telas de busca ("Buscar mensagens" e
+"Ver top reacoes") - separado de proposito: sobrescrever `lista`
+reintroduziria o bug do salto de scroll que ja tinha sido corrigido
+(ver v2026.10.08.8). `executarBusca()` em "Buscar mensagens" foi
+dividida numa casca fina (seta "Buscando..." em `statusCarregando`,
+chama a logica de verdade, limpa no `finally`) e `executarBuscaPorDentro()`
+com o corpo original intacto.
+
+**3. Botao "Voltar" maior.** Era um link de 12px sem borda, facil de
+nao notar. Virou um botao com borda, fundo proprio, 13px/negrito e
+padding - mesmo comportamento (`telaLogado()`), so mais visivel.
+
+**4. Texto de "Busca avancada" revisado.** Duas confirmacoes pedidas
+pelo usuario:
+- "Publico" nesse contexto quer dizer especificamente "tem ou ja teve
+  @usuario publico" - nao tem relacao com o grupo exigir aprovacao pra
+  entrar. Ler/buscar nunca exige ser membro, so enviar mensagem exige;
+  um grupo publico com aprovacao de entrada continua totalmente
+  alcancavel pela Busca avancada.
+- A exigencia de conta Premium (e o esquema de cota diaria gratis +
+  pagamento em Stars depois) e especifica do modo de busca por texto
+  livre (`query`), nao do modo hashtag - confirmado consultando a
+  documentacao oficial (`core.telegram.org/method/channels.searchPosts`),
+  que escopa essa mecanica explicitamente a "full text post searches
+  (query)", sem linguagem equivalente pro modo hashtag. Isso bate com o
+  que o usuario ja tinha observado na pratica (erro de Premium some ao
+  trocar pra busca por hashtag).
+
+**5. Buscador/verificador de link de grupo dentro da Busca avancada.**
+Pedido como ideia solta ("como voce achar melhor"), implementado como
+checkbox opcional (`checkboxLinks`, ao lado do checkbox de hashtag) por
+ser mais lento que a busca normal:
+- `extrairLinksTelegram(texto)`: regex construida nova a cada chamada
+  (nunca reaproveitada entre strings - regex com flag `g` guarda estado
+  em `lastIndex`, reusar o mesmo objeto entre textos diferentes pode
+  pular ou duplicar match dependendo de onde parou da ultima vez),
+  reconhece `t.me/nome` e `t.me/+hash` / `t.me/joinchat/hash` (convite).
+- `verificarLinkTelegram(link)`: convite usa
+  `Api.messages.CheckChatInvite({hash})`, usuario publico usa
+  `Api.contacts.ResolveUsername({username})` - ambos confirmados
+  existentes no schema TL embutido (checado direto no `bundle.js`).
+  Link invalido/expirado nao vem como campo especial numa resposta de
+  sucesso, vem como erro RPC jogado (`USERNAME_NOT_OCCUPIED`,
+  `INVITE_HASH_EXPIRED` etc) - por isso o `try/catch` em volta de cada
+  chamada.
+- `processarLinksDaMensagem(texto)`, chamada dentro do loop de
+  `executarBuscaGlobal()` (so quando `checkboxLinks.checked`), monta um
+  item por link encontrado (dedup por `Map` `linksVistos`, chave
+  `tipo:valor` em minusculo) com estado "verificando..." que atualiza
+  pra "valido" (com titulo/numero de participantes quando disponiveis, e
+  um link "abrir") ou "invalido ou expirado" assim que a verificacao
+  responde. Lista (`listaLinks`) e titulo (`tituloLinks`, escondido ate
+  achar o primeiro link) sao resetados junto com `lista` numa busca nova
+  (nao numa continuacao via "Carregar mais").
+
+Versao 2026.10.08.12.
+
 Versao 2026.10.08.11.

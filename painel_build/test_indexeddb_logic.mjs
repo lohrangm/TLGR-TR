@@ -146,7 +146,10 @@ function contarMensagensDoChat(db, chatId) {
     });
 }
 
-function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte }) {
+function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte, ordenarPor }) {
+    if (ordenarPor === "data") {
+        return buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte });
+    }
     return new Promise((resolve, reject) => {
         const resultados = [];
         const indice = transacao(db, "mensagens", "readonly").index("por_reacoes");
@@ -168,6 +171,35 @@ function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte }) {
             const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
             const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
             if ((!chatId || valor.chatId === chatId) && bateData) {
+                resultados.push(valor);
+            }
+            cursor.continue();
+        };
+        pedido.onerror = () => reject(pedido.error);
+    });
+}
+
+// Mirror de buscarTopPorData() em painel_logic.js - mesmo filtro de
+// buscarTop(), ordenado por data (mais recente primeiro) em vez de reacoes.
+function buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte }) {
+    return new Promise((resolve, reject) => {
+        const resultados = [];
+        let visitados = 0;
+        const LIMITE_VISITAS = 50000;
+        const loja = transacao(db, "mensagens", "readonly");
+        const pedido = chatId ? loja.index("por_chat").openCursor(IDBKeyRange.only(chatId)) : loja.openCursor();
+        pedido.onsuccess = () => {
+            const cursor = pedido.result;
+            if (!cursor || visitados >= LIMITE_VISITAS) {
+                resultados.sort((a, b) => (a.dateUtc < b.dateUtc ? 1 : -1));
+                resolve(resultados.slice(0, limite));
+                return;
+            }
+            visitados++;
+            const valor = cursor.value;
+            const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
+            const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
+            if ((valor.reactionTotal || 0) >= minimo && bateData) {
                 resultados.push(valor);
             }
             cursor.continue();
@@ -233,6 +265,37 @@ const top6 = await buscarTop(db, { chatId: null, minimo: 1, limite: 10, dataDe: 
 assert(
     top6.length === 1 && top6[0].key === "B:2",
     "so dataDe (buscarTop, sem dataAte) traz so quem bate a partir dali (veio " + top6.length + ")"
+);
+
+// ---- buscarTop com ordenarPor: "data" (dispatcha pra buscarTopPorData) ----
+// Mais recente primeiro: B:2(01-05), B:1(01-04), A:3(01-03), A:2(01-02), A:1(01-01)
+const top7 = await buscarTop(db, { chatId: null, minimo: 1, limite: 10, ordenarPor: "data" });
+assert(top7.length === 5, "ordenarPor='data' no top geral retorna todas as 5 (veio " + top7.length + ")");
+assert(top7[0].key === "B:2" && top7[top7.length - 1].key === "A:1", "ordenarPor='data' comeca na mais recente (B:2) e termina na mais antiga (A:1)");
+assert(
+    top7.every((m, i) => i === 0 || m.dateUtc <= top7[i - 1].dateUtc),
+    "ordenarPor='data' esta em ordem decrescente de data"
+);
+
+// Filtro por grupo A com ordenarPor data - A:3(01-03), A:2(01-02), A:1(01-01)
+const top8 = await buscarTop(db, { chatId: "A", minimo: 1, limite: 10, ordenarPor: "data" });
+assert(
+    top8.length === 3 && top8[0].key === "A:3" && top8[2].key === "A:1",
+    "ordenarPor='data' + filtro grupo A vem so do grupo A, mais recente primeiro (veio " + top8.map((m) => m.key).join(",") + ")"
+);
+
+// ordenarPor='data' combinado com filtro de periodo (01-02 a 01-04) - B:1, A:3, A:2 nessa ordem
+const top9 = await buscarTop(db, {
+    chatId: null,
+    minimo: 1,
+    limite: 10,
+    dataDe: "2026-01-02",
+    dataAte: "2026-01-04",
+    ordenarPor: "data",
+});
+assert(
+    top9.length === 3 && top9.map((m) => m.key).join(",") === "B:1,A:3,A:2",
+    "ordenarPor='data' + periodo respeita os dois filtros juntos (veio " + top9.map((m) => m.key).join(",") + ")"
 );
 
 // ---- contarMensagensDoChat - base da tabela "o que ja esta salvo" ----
