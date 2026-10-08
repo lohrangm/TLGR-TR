@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.08.6
+// @version      2026.10.08.7
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -169484,7 +169484,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.08.6";
+window.TRP_VERSAO = "2026.10.08.7";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
@@ -169850,6 +169850,7 @@ window.TRP_VERSAO = "2026.10.08.6";
     function alternarPainel() {
         if (painel) {
             painel.remove();
+            removerBotoesNavegacao();
             painel = null;
             return;
         }
@@ -169877,23 +169878,26 @@ window.TRP_VERSAO = "2026.10.08.6";
         });
         document.body.appendChild(painel);
         renderizarCabecalho();
-        adicionarBotaoTopo();
+        adicionarBotoesNavegacao();
         decidirTela();
     }
 
-    // Botao flutuante fixo na tela (nao rola junto com o conteudo do
-    // painel) pra voltar ao topo sem precisar arrastar o mouse rolando -
-    // util em listas longas de resultado. Filho do painel (nao de #trp-
-    // corpo), entao sobrevive a troca de tela e some sozinho quando o
-    // painel fecha (painel.remove() leva os filhos junto).
-    function adicionarBotaoTopo() {
-        const botao = document.createElement("button");
-        botao.textContent = "↑";
-        botao.title = "Voltar ao topo";
-        Object.assign(botao.style, {
+    // Botoes flutuantes fixos na tela pra ir direto pro topo ou pro fim da
+    // lista, sem arrastar o mouse rolando - util em listas longas de
+    // resultado. Anexados direto no document.body, NAO no painel: o
+    // painel tem overflow:auto, e um "position:fixed" filho de um
+    // ancestral com overflow diferente de visible fica cortado pelos
+    // limites desse ancestral (clipping segue o DOM, independente da
+    // posicao calculada ser relativa a viewport) - isso deixava a setinha
+    // de voltar ao topo praticamente invisivel na maioria dos tamanhos de
+    // janela (so aparecia se o painel fosse baixo o bastante pra sobrar
+    // espaco depois do fim dele). Por nao serem mais filhos do painel,
+    // "painel.remove()" (fechar o painel) nao leva eles junto - por isso
+    // alternarPainel() remove os dois na mao ao fechar.
+    function adicionarBotoesNavegacao() {
+        const estiloBase = {
             position: "fixed",
             right: "34px",
-            bottom: "24px",
             zIndex: 1000000,
             width: "32px",
             height: "32px",
@@ -169905,11 +169909,50 @@ window.TRP_VERSAO = "2026.10.08.6";
             fontWeight: "700",
             cursor: "pointer",
             boxShadow: "0 2px 10px rgba(0,0,0,0.35)",
-        });
-        botao.addEventListener("click", () => {
+        };
+
+        const botaoTopo = document.createElement("button");
+        botaoTopo.id = "trp-ir-topo";
+        botaoTopo.textContent = "↑";
+        botaoTopo.title = "Voltar ao topo";
+        Object.assign(botaoTopo.style, estiloBase, { bottom: "62px" });
+        botaoTopo.addEventListener("click", () => {
             painel.scrollTop = 0;
         });
-        painel.appendChild(botao);
+        document.body.appendChild(botaoTopo);
+
+        const botaoFim = document.createElement("button");
+        botaoFim.id = "trp-ir-fim";
+        botaoFim.textContent = "↓";
+        botaoFim.title = "Ir pro fim";
+        Object.assign(botaoFim.style, estiloBase, { bottom: "24px" });
+        botaoFim.addEventListener("click", () => {
+            painel.scrollTop = painel.scrollHeight;
+        });
+        document.body.appendChild(botaoFim);
+    }
+
+    function removerBotoesNavegacao() {
+        const topo = document.getElementById("trp-ir-topo");
+        const fim = document.getElementById("trp-ir-fim");
+        if (topo) topo.remove();
+        if (fim) fim.remove();
+    }
+
+    // Restaura painel.scrollTop depois que o navegador terminar de
+    // recalcular o layout da lista recem-recarregada. Atribuir o valor
+    // logo em seguida ao await (sincrono) costuma funcionar, mas, com
+    // bastante item novo de uma vez, o reflow pode nao ter terminado ainda
+    // nesse instante, e o navegador acaba grudando o scroll num valor
+    // errado de qualquer forma. Dois requestAnimationFrame seguidos (em
+    // vez de so atribuir direto) garante que isso rode so depois de pelo
+    // menos um ciclo completo de layout+pintura.
+    function restaurarScrollDepoisDoReflow(valor) {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                painel.scrollTop = valor;
+            });
+        });
     }
 
     function renderizarCabecalho() {
@@ -170745,7 +170788,7 @@ window.TRP_VERSAO = "2026.10.08.6";
                     const scrollAnterior = painel.scrollTop;
                     limiteAtual += 50;
                     await atualizarLista();
-                    painel.scrollTop = scrollAnterior;
+                    restaurarScrollDepoisDoReflow(scrollAnterior);
                 });
             }
         }
@@ -171046,7 +171089,7 @@ window.TRP_VERSAO = "2026.10.08.6";
                     const scrollAnterior = painel.scrollTop;
                     limiteAtual += 100;
                     await executarBusca();
-                    painel.scrollTop = scrollAnterior;
+                    restaurarScrollDepoisDoReflow(scrollAnterior);
                 });
             }
         }

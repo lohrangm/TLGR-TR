@@ -920,3 +920,50 @@ inteira (sem match parcial) documentada pra busca nativa deles
 (bugs.telegram.org/c/724). Nao da pra tornar mais inteligente do nosso
 lado porque nao temos o texto bruto de canais publicos que a conta nao
 participa - so o que a API ja devolve filtrado.
+
+## v2026.10.08.7: setinha de navegacao invisivel, scroll ainda instavel, confirmacao sobre acesso a grupo fechado
+
+**Setinha "voltar ao topo" sumida**: achada a causa real. Ela era filha de
+`painel`, que tem `overflow:auto` - e um elemento `position:fixed` filho
+de um ancestral com overflow diferente de `visible` fica RECORTADO pelos
+limites visuais desse ancestral, mesmo a posicao sendo calculada em
+relacao a viewport (isso e comportamento de CSS, nao bug de navegador
+especifico). Como o painel tem `maxHeight:80vh` comecando em `top:40px`,
+na maioria dos tamanhos de janela o botao (fixado a `bottom:24px` da
+viewport) cai fisicamente fora da caixa do painel e simplesmente nao
+pinta - so apareceria em janelas muito baixas. Conserto: os botoes de
+navegacao agora sao filhos de `document.body`, nao do `painel` -
+`adicionarBotoesNavegacao()`/`removerBotoesNavegacao()` substituem a
+antiga `adicionarBotaoTopo()`, e `alternarPainel()` remove os dois na mao
+ao fechar (ja que nao saem mais de graca junto com `painel.remove()`).
+Aproveitado pra adicionar a setinha "↓ pro fim" simetrica, pedida pelo
+usuario.
+
+**"Mostrar mais" ainda ocasionalmente jogando pro topo** mesmo depois do
+conserto da v2026.10.08.6: a hipotese e que atribuir `painel.scrollTop`
+logo em seguida ao `await` (sincrono, no mesmo tick) pode rodar antes do
+navegador terminar de recalcular o layout da lista inteira recarregada,
+principalmente com bastante item novo de uma vez - aí o proprio navegador
+re-clampa o scroll depois, por conta propria. Novo helper
+`restaurarScrollDepoisDoReflow()` usa dois `requestAnimationFrame`
+encadeados (padrao conhecido pra isso) em vez de atribuir direto, pra so
+restaurar depois de garantir que pelo menos um ciclo completo de
+layout+pintura ja rodou. Aplicado nos dois lugares (Buscar mensagens e
+Ver top reacoes).
+
+Confirmado, sem mudanca de codigo, que a "Busca avancada" nunca teve o
+bug do scroll: ela usa paginacao por cursor do lado do servidor
+(`channels.SearchPosts` com `offsetRate`/`offsetPeer`/`offsetId`) e o
+"Carregar mais" dali so ANEXA os itens novos no fim da lista existente -
+nunca esvazia `lista.innerHTML` pra recarregar tudo, que era a causa raiz
+do problema nos outros dois. Por isso nunca precisou do mesmo conserto.
+
+**Pergunta do usuario, respondida sem mudanca de codigo**: nao, nenhuma
+das ferramentas de busca alcanca conteudo de grupo FECHADO que a conta
+nao participa. "Busca avancada" so alcanca canal/supergrupo PUBLICO (com
+@usuario) - e limite do proprio metodo oficial do Telegram
+(`channels.SearchPosts`), nao so configuracao nossa. Pra grupo fechado,
+o protocolo MTProto exige ser participante (ter o access_hash do chat)
+pra sequer pedir uma mensagem de la - nao e uma lacuna de busca, e
+controle de acesso de base do proprio Telegram. no caso dele poder
+acessar implicaria em ser adicionado ao grupo.
