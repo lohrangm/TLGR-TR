@@ -374,6 +374,55 @@
         return botao;
     }
 
+    // Caixinha marcavel feita na mao (nao usa <input type="checkbox">
+    // nativo). O CSS global do Telegram Web reseta a aparencia de checkbox
+    // nativo sem recolocar nada visivel no lugar - o elemento continua
+    // funcional (por isso o cursor vira de "clicavel"), mas invisivel. Um
+    // quadrado de verdade desenhado por nos nao depende do CSS do site.
+    function caixaMarcavel(corpo, rotuloInicial) {
+        const bloco = document.createElement("div");
+        bloco.style.cssText =
+            "margin-bottom:10px;padding:8px;border:1px solid #3a4150;border-radius:6px;background:#1c2028;" +
+            "color:#e6e8ec;font-size:12px;display:flex;align-items:flex-start;gap:8px;cursor:pointer;user-select:none;";
+        const quadrado = document.createElement("div");
+        quadrado.style.cssText =
+            "width:18px;height:18px;flex-shrink:0;margin-top:1px;border:2px solid #8b92a3;border-radius:4px;" +
+            "display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;color:#fff;background:#0c0e12;";
+        const texto = document.createElement("span");
+        texto.textContent = rotuloInicial;
+        bloco.appendChild(quadrado);
+        bloco.appendChild(texto);
+        corpo.appendChild(bloco);
+
+        let marcado = false;
+        const atualizarVisual = () => {
+            quadrado.textContent = marcado ? "✓" : "";
+            quadrado.style.background = marcado ? "#4da3ff" : "#0c0e12";
+            quadrado.style.borderColor = marcado ? "#4da3ff" : "#8b92a3";
+        };
+        bloco.addEventListener("click", () => {
+            if (bloco.style.pointerEvents === "none") return;
+            marcado = !marcado;
+            atualizarVisual();
+        });
+        atualizarVisual();
+
+        return {
+            get checked() {
+                return marcado;
+            },
+            set checked(valor) {
+                marcado = !!valor;
+                atualizarVisual();
+            },
+            set disabled(valor) {
+                bloco.style.opacity = valor ? "0.5" : "1";
+                bloco.style.pointerEvents = valor ? "none" : "auto";
+            },
+            elementoTexto: texto,
+        };
+    }
+
     function textoAviso(corpo, mensagem, cor) {
         let aviso = corpo.querySelector(".trp-aviso");
         if (!aviso) {
@@ -643,19 +692,9 @@
         // texto completo das mensagens antigas sozinho, mesmo rodando
         // "Todos" de novo. Esse checkbox forca ignorar o checkpoint; com
         // "Todos" selecionado, vale pra cada grupo que o scan passar.
-        const blocoReescanear = document.createElement("div");
-        blocoReescanear.style.cssText =
-            "margin-bottom:10px;padding:8px;border:1px solid #3a4150;border-radius:6px;background:#1c2028;color:#e6e8ec;font-size:12px;";
-        blocoReescanear.innerHTML =
-            '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;">' +
-            '<input type="checkbox" id="trp-reescanear-zero" style="width:17px;height:17px;flex-shrink:0;cursor:pointer;accent-color:#4da3ff;"> ' +
-            '<span id="trp-reescanear-texto">Reescanear do zero</span>' +
-            "</label>";
-        corpo.appendChild(blocoReescanear);
-        const checkboxReescanear = blocoReescanear.querySelector("#trp-reescanear-zero");
-        const textoReescanear = blocoReescanear.querySelector("#trp-reescanear-texto");
+        const checkboxReescanear = caixaMarcavel(corpo, "Reescanear do zero");
         const atualizarTextoReescanear = () => {
-            textoReescanear.textContent = selectGrupo.value
+            checkboxReescanear.elementoTexto.textContent = selectGrupo.value
                 ? "Reescanear esse grupo do zero (pega o texto completo de mensagens antigas que ainda nao foram salvas, util pra busca)"
                 : 'Reescanear TODOS os grupos do zero (ignora o progresso salvo de cada um - pode demorar bem mais que o normal, repassa o historico inteiro de novo)';
         };

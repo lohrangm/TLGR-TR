@@ -240,6 +240,34 @@ nos dois modos, com o texto do label mudando pra avisar que em "Todos" ele
 reescaneia TODOS os grupos do zero (pode demorar bem mais, repassa o
 historico inteiro de cada um de novo).
 
+Adicionado tambem um log de diagnostico (`console.log("[Top Reacoes]
+scan:", ...)`) no inicio de cada chat processado, mostrando
+`reescanearDoZero` e `ultimoId` - usado pra confirmar com evidencia real
+(log do usuario) que o problema seguinte nao era mais o checkbox escondido.
+
+## Checkbox nativo invisivel no Telegram Web (corrigido)
+
+Depois do fix acima, o usuario reportou (com screenshot) que a caixinha
+"Reescanear do zero" aparecia so como uma caixa de texto com borda, SEM
+nenhum quadrado de checkbox visivel - o cursor virava de "clicavel" ao
+passar por cima, mas clicar nao parecia fazer nada. Causa: o CSS global do
+Telegram Web reseta a aparencia de `input[type="checkbox"]` (coisa comum
+em apps com design system proprio) sem recolocar nada visivel no lugar de
+elementos injetados por fora da arvore de componentes deles - o checkbox
+continuava funcional (o DOM via `.checked` funcionava), so que invisivel.
+
+Corrigido substituindo por uma caixa marcavel feita na mao
+(`caixaMarcavel()`, perto de `botaoAcao()`/`campoTexto()`): um `<div>`
+quadrado com borda, que alterna cor de fundo e um "✓" via JS puro no
+`click`, sem depender de nenhuma aparencia nativa de form control. Devolve
+um objeto com `.checked` (getter/setter) e `.disabled` (setter) pra manter
+a mesma interface que o `telaScanner()` ja usava, trocando so a
+implementacao interna. **Licao pro resto do projeto**: qualquer novo
+controle de formulario (checkbox, radio, talvez select customizado) deve
+usar esse mesmo padrao de elemento proprio em vez de depender da aparencia
+nativa do navegador, porque o CSS do host (Telegram Web) pode reset-ar sem
+aviso.
+
 ## Backlog (pedido pelo usuario, nao implementado ainda)
 
 - **Marcar mensagem como "ja visto" (manual)**: usuario quer uma caixinha
