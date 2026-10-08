@@ -6,3 +6,4 @@ data/*.session
 data/*.session-journal
 data/*.db
 grupos_para_escanear.txt
+commit_message.txt
