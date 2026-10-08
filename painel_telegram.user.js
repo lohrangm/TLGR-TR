@@ -170129,10 +170129,11 @@ store2/dist/store2.js:
         // "Todos" de novo. Esse checkbox forca ignorar o checkpoint; com
         // "Todos" selecionado, vale pra cada grupo que o scan passar.
         const blocoReescanear = document.createElement("div");
-        blocoReescanear.style.cssText = "margin-bottom:10px;color:#8b92a3;font-size:12px;";
+        blocoReescanear.style.cssText =
+            "margin-bottom:10px;padding:8px;border:1px solid #3a4150;border-radius:6px;background:#1c2028;color:#e6e8ec;font-size:12px;";
         blocoReescanear.innerHTML =
-            '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">' +
-            '<input type="checkbox" id="trp-reescanear-zero"> ' +
+            '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;">' +
+            '<input type="checkbox" id="trp-reescanear-zero" style="width:17px;height:17px;flex-shrink:0;cursor:pointer;accent-color:#4da3ff;"> ' +
             '<span id="trp-reescanear-texto">Reescanear do zero</span>' +
             "</label>";
         corpo.appendChild(blocoReescanear);
