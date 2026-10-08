@@ -708,3 +708,40 @@ Reforcando o que o usuario deixou explicito: essa mudanca e sobre
 PRECISAO da busca (quanto ela filtra), nao tem nada a ver com o problema
 de COBERTURA do scan (mensagem que a busca nativa acha e a nossa nem tem
 salva) - aquele segue em aberto, ver secao "Verificar mensagem" acima.
+
+## Busca hibrida: "Buscar mensagens" tambem pergunta ao vivo pro servidor (pedido do usuario)
+
+Usuario perguntou se dava pra usar os dois sistemas de busca (nosso banco
+local + a busca nativa do Telegram) ao mesmo tempo, depois de eu explicar
+(com pesquisa em bugs.telegram.org, GitHub do tdlib e de um projeto
+parecido, SearchGram) que sao dois mecanismos completamente independentes:
+o nativo e 100% server-side (confirmado por um mantenedor do TDLib - "o
+client nao tem como melhorar isso"), o nosso so enxerga o que ja esta no
+IndexedDB local.
+
+Resposta: sim, e da pra fazer sem reinventar nada - `cliente.iterMessages`
+(a mesma funcao ja usada no scan) aceita uma opcao `search` que, por
+baixo, dispara exatamente o `messages.Search` que a busca nativa usa
+(confirmado lendo `node_modules/teleproto/client/messages.js` - quando
+`search` e passado, o proprio teleproto monta o request de
+`Api.messages.Search` com `filter: InputMessagesFilterEmpty`, do mesmo
+jeito que a busca "dentro do grupo" do app).
+
+Na tela "Buscar mensagens", nova caixinha "Tambem buscar ao vivo no
+servidor do Telegram" (so funciona com um grupo especifico selecionado,
+nao com "Todos os grupos" - evita uma chamada por grupo escaneado e risco
+de flood wait). Quando marcada, `executarBusca()` roda os dois em
+paralelo conceitual: `buscarTexto()` no banco local (do jeito de sempre) e
+`buscarAoVivoNoServidor()` (novo helper, usa `encontrarEntidadePorChatId()`
+que ja existia da tela "Verificar mensagem") perguntando pro servidor.
+Resultado que so o servidor achou (nao estava no local, dedupe por
+`chatId:messageId`) e **salvo na hora** via `salvarMensagem()` - ou seja,
+a busca hibrida tambem conserta sozinha, na pratica, o tipo de buraco de
+scan que motivou a tela "Verificar mensagem" (sem precisar rodar o scan
+inteiro de novo so por causa de uma mensagem). Esses itens aparecem na
+lista com uma marca verde "achado ao vivo no servidor, salvo agora" pra
+ficar claro que e novo.
+
+Falha na busca ao vivo (chat nao resolvido, erro de rede, etc.) nao quebra
+a busca local - aparece so um aviso em vermelho acima dos resultados
+locais, que continuam normais.

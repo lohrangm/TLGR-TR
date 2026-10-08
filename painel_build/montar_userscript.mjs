@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from "fs";
 // dia, comecando em 1) - BUMP AQUI a cada vez que gerar uma nova entrega,
 // pra quem esta testando saber se o Tampermonkey ja pegou a versao nova ou
 // ainda esta rodando uma antiga.
-const VERSAO = "2026.10.08.2";
+const VERSAO = "2026.10.08.3";
 
 const CABECALHO = `// ==UserScript==
 // @name         Telegram Top Reacoes - Painel

@@ -1231,6 +1231,29 @@
         }
 
         const campoBusca = campoTexto(corpo, "Palavra ou trecho a buscar", "text");
+
+        // Busca hibrida: alem do nosso banco local (substring, OU logico
+        // entre as palavras), tambem pergunta ao vivo pro SERVIDOR do
+        // Telegram (o mesmo messages.Search que a busca nativa usa, via
+        // cliente.iterMessages com a opcao "search"). Os dois sistemas sao
+        // independentes (ver HISTORICO_TECNICO.md, secao sobre a pesquisa
+        // nessa diferenca) - um pega o que o outro perde, por razoes
+        // diferentes. Mensagem que o servidor acha e a gente ainda nao
+        // tinha salva localmente e salva na hora (conserta o buraco de
+        // scan sozinho, de brinde). So funciona com um grupo especifico
+        // selecionado - "Todos os grupos" faria uma chamada por grupo
+        // escaneado, arriscando flood wait sem necessidade.
+        const blocoServidor = document.createElement("div");
+        blocoServidor.style.cssText = "display:flex;align-items:flex-start;gap:8px;margin:6px 0 10px;font-size:12px;";
+        const checkboxServidor = criarQuadradoMarcavel(false, null);
+        const labelServidor = document.createElement("span");
+        labelServidor.style.color = "#8b92a3";
+        labelServidor.textContent =
+            "Tambem buscar ao vivo no servidor do Telegram (pega mensagem que o scan local ainda nao tem - precisa de um grupo especifico selecionado, nao funciona com \"Todos os grupos\")";
+        blocoServidor.appendChild(checkboxServidor.elemento);
+        blocoServidor.appendChild(labelServidor);
+        corpo.appendChild(blocoServidor);
+
         const botaoBuscar = botaoAcao(corpo, "Buscar");
 
         const lista = document.createElement("div");
@@ -1265,6 +1288,9 @@
                 "</div>" +
                 '<div style="color:#8b92a3;font-size:11px;">' +
                 escapeHtml(m.chatTitle) +
+                (m.achadoNoServidor
+                    ? ' <span style="color:#5ec26a;">· achado ao vivo no servidor, salvo agora</span>'
+                    : "") +
                 "</div>" +
                 "<div>" +
                 escapeHtml(truncar(texto, 200)) +
@@ -1294,6 +1320,37 @@
             return { cabecalho, seta };
         }
 
+        // Busca ao vivo no servidor (messages.Search, o mesmo mecanismo da
+        // busca nativa) pra UM grupo especifico - novas mensagens achadas
+        // que nao estavam salvas localmente sao salvas na hora (conserta o
+        // buraco sozinho). Separado de buscarTexto() porque e uma fonte de
+        // dados completamente diferente (servidor, ao vivo) em vez de ler o
+        // IndexedDB local.
+        async function buscarAoVivoNoServidor(chatId, termo, minimoReacoes) {
+            const entidade = await encontrarEntidadePorChatId(chatId);
+            if (!entidade) {
+                throw new Error("grupo nao encontrado entre os dialogs dessa conta agora");
+            }
+            const chatInfo = chats.find((c) => c.chatId === chatId);
+            const chatTitle = (chatInfo && chatInfo.chatTitle) || chatId;
+            const resultados = [];
+            for await (const mensagem of cliente.iterMessages(entidade, { search: termo, limit: 50 })) {
+                const { reactions, total } = extrairReacoes(mensagem);
+                if (total < minimoReacoes) continue;
+                resultados.push({
+                    key: chatId + ":" + mensagem.id,
+                    chatId,
+                    messageId: mensagem.id,
+                    dateUtc: dataIso(mensagem),
+                    texto: textoCompleto(mensagem),
+                    reactionTotal: total,
+                    reactions,
+                    chatTitle,
+                });
+            }
+            return resultados;
+        }
+
         async function executarBusca() {
             const termo = campoBusca.value.trim();
             if (!termo) {
@@ -1305,15 +1362,62 @@
             const minimo = parseInt(inputMinimo.value, 10) || 0;
             const ordenarPor = selectOrdenar.value;
             const mensagens = await buscarTexto(db, { termo, chatId, minimo, limite: limiteAtual, ordenarPor });
-            if (!mensagens.length) {
-                lista.innerHTML = '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>';
+
+            let novasDoServidor = [];
+            let erroServidor = null;
+            if (checkboxServidor.checked && chatId) {
+                try {
+                    const chavesLocais = new Set(mensagens.map((m) => m.key));
+                    const doServidor = await buscarAoVivoNoServidor(chatId, termo, minimo);
+                    novasDoServidor = doServidor
+                        .filter((m) => !chavesLocais.has(m.key))
+                        .map((m) => ({ ...m, achadoNoServidor: true }));
+                    for (const m of novasDoServidor) {
+                        const { achadoNoServidor, ...registro } = m;
+                        await salvarMensagem(db, registro);
+                    }
+                } catch (erro) {
+                    erroServidor = erro && erro.message ? erro.message : String(erro);
+                }
+            }
+
+            const todasAsMensagens = mensagens.concat(novasDoServidor);
+            if (ordenarPor === "reacoes") {
+                todasAsMensagens.sort((a, b) => (b.reactionTotal || 0) - (a.reactionTotal || 0));
+            } else {
+                todasAsMensagens.sort((a, b) => (a.dateUtc < b.dateUtc ? 1 : -1));
+            }
+
+            if (!todasAsMensagens.length) {
+                lista.innerHTML = erroServidor
+                    ? '<div style="color:#ff6b6b;">Nada encontrado local, e a busca ao vivo no servidor falhou: ' +
+                      escapeHtml(erroServidor) +
+                      "</div>"
+                    : '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>';
                 return;
             }
             lista.innerHTML = "";
 
-            const maisDeUmGrupo = !chatId && mensagens.some((m) => m.chatId !== mensagens[0].chatId);
+            if (erroServidor) {
+                lista.insertAdjacentHTML(
+                    "beforeend",
+                    '<div style="color:#ff6b6b;font-size:11px;margin-bottom:6px;">Busca ao vivo no servidor falhou (' +
+                        escapeHtml(erroServidor) +
+                        ") - resultado abaixo e so o local.</div>"
+                );
+            }
+            if (novasDoServidor.length) {
+                lista.insertAdjacentHTML(
+                    "beforeend",
+                    '<div style="color:#5ec26a;font-size:11px;margin-bottom:6px;">' +
+                        novasDoServidor.length +
+                        " mensagem(ns) achada(s) ao vivo no servidor que nao estavam salvas local - ja salvei agora.</div>"
+                );
+            }
+
+            const maisDeUmGrupo = !chatId && todasAsMensagens.some((m) => m.chatId !== todasAsMensagens[0].chatId);
             if (maisDeUmGrupo) {
-                for (const grupo of agruparPorChat(mensagens)) {
+                for (const grupo of agruparPorChat(todasAsMensagens)) {
                     const { cabecalho, seta } = criarCabecalhoGrupo(grupo.chatTitle, grupo.itens.length);
                     const containerItens = document.createElement("div");
                     cabecalho.addEventListener("click", () => {
@@ -1326,7 +1430,7 @@
                     for (const m of grupo.itens) containerItens.appendChild(criarItemResultado(m));
                 }
             } else {
-                for (const m of mensagens) lista.appendChild(criarItemResultado(m));
+                for (const m of todasAsMensagens) lista.appendChild(criarItemResultado(m));
             }
 
             if (mensagens.length >= limiteAtual) {
