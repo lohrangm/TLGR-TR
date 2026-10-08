@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.08.1
+// @version      2026.10.08.2
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -169482,7 +169482,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.08.1";
+window.TRP_VERSAO = "2026.10.08.2";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
@@ -169661,15 +169661,18 @@ window.TRP_VERSAO = "2026.10.08.1";
     // por palavra inteira, as vezes nao acha mensagem que claramente existe
     // (ver HISTORICO_TECNICO.md). So enxerga o que ja foi salvo localmente.
     //
-    // Termo com mais de uma palavra ("arlene lee") NAO exige que elas
-    // apareçam juntas e nessa ordem no texto - cada palavra e checada
-    // separado, e a mensagem so entra se TODAS aparecerem em algum lugar do
-    // texto (E logico, qualquer ordem/posicao). Antes disso era um unico
-    // .includes() do termo inteiro, que exigia a frase exata adjacente -
-    // "arlene lee" so batia com "Arlene Lee" literal e ficava mais estreito
-    // que buscar so "arlene" (que pega "Darlene", "Marlene" etc. tambem),
-    // dando a falsa impressao de que resultados "sumiram" ao refinar a
-    // busca com mais uma palavra.
+    // Termo com mais de uma palavra ("arlene lee") NAO exige frase exata
+    // nem que todas as palavras apareçam - cada palavra e checada separado,
+    // e a mensagem entra se QUALQUER UMA delas aparecer em algum lugar do
+    // texto (OU logico). Essa ferramenta existe pra achar o maximo possivel
+    // (o problema real e mensagem que deveria aparecer e nao aparece, nao o
+    // contrario) - entao, de proposito, prioriza nao perder nada a filtrar
+    // demais: "arlene lee" tambem traz "Darlene amaro" e "Marlene soares"
+    // (so tem "arlene"), e eventualmente mensagem que so tem "lee" sem
+    // nenhuma relacao com "arlene". Isso e intencional, pedido pelo usuario -
+    // ele prefere resultado a mais (filtra visualmente depois) a resultado
+    // a menos. Buscar uma palavra so (sem espaco) se comporta exatamente
+    // como sempre: substring simples.
     //
     // Sem chatId, o cursor percorre a loja inteira pela chave primaria (que
     // comeca com o chatId), entao visita TODAS as mensagens de um grupo antes
@@ -169708,10 +169711,10 @@ window.TRP_VERSAO = "2026.10.08.1";
                 const texto = valor.texto || valor.textPreview || "";
                 const textoNormalizado = normalizarTexto(texto);
                 // palavras.length === 0 (termo vazio/so espaco) nunca bate -
-                // sem isso, .every() num array vazio da true e a "busca"
-                // devolveria o banco inteiro.
-                const bateTodasAsPalavras = palavras.length > 0 && palavras.every((p) => textoNormalizado.includes(p));
-                if ((valor.reactionTotal || 0) >= minimoReacoes && bateTodasAsPalavras) {
+                // sem isso, .some() num array vazio da false, entao isso ja
+                // seria seguro de qualquer jeito, mas deixa explicito.
+                const bateAlgumaPalavra = palavras.length > 0 && palavras.some((p) => textoNormalizado.includes(p));
+                if ((valor.reactionTotal || 0) >= minimoReacoes && bateAlgumaPalavra) {
                     resultados.push(valor);
                 }
                 cursor.continue();

@@ -112,8 +112,8 @@ function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor }) {
             const valor = cursor.value;
             const texto = valor.texto || valor.textPreview || "";
             const textoNormalizado = normalizarTexto(texto);
-            const bateTodasAsPalavras = palavras.length > 0 && palavras.every((p) => textoNormalizado.includes(p));
-            if ((valor.reactionTotal || 0) >= minimoReacoes && bateTodasAsPalavras) {
+            const bateAlgumaPalavra = palavras.length > 0 && palavras.some((p) => textoNormalizado.includes(p));
+            if ((valor.reactionTotal || 0) >= minimoReacoes && bateAlgumaPalavra) {
                 resultados.push(valor);
             }
             cursor.continue();
@@ -267,10 +267,14 @@ const semResultado = await buscarTexto(db, { termo: "termoquenaoexisteemlugarnen
 assert(semResultado.length === 0, "termo inexistente retorna lista vazia");
 
 // ---- buscarTexto com termo de mais de uma palavra - reproduz o caso
-// relatado pelo usuario: buscar "arlene lee" sumia com resultados que
-// buscar so "arlene" trazia, porque o termo inteiro era tratado como uma
-// unica substring exigindo as palavras juntas e nessa ordem. Agora cada
-// palavra e checada separada (E logico), entao a ordem/posicao nao importa.
+// relatado pelo usuario. Primeiro o termo inteiro era tratado como uma
+// unica substring (exigia as palavras juntas, coladas, nessa ordem - so
+// "Arlene Lee" literal batia). Depois tentei E logico (exigir as duas
+// palavras, em qualquer posicao) - mas o usuario pediu pra manter a
+// ferramenta a mais ampla possivel: no conceito dele, "Darlene"/"Marlene"
+// (que so tem "arlene") DEVEM continuar aparecendo numa busca por "arlene
+// lee", porque o problema real e perder mensagem, nao mostrar mensagem a
+// mais. Ficou OU logico: basta UMA das palavras aparecer.
 await salvarMensagem(db, {
     key: "A:6",
     chatId: "A",
@@ -298,21 +302,34 @@ await salvarMensagem(db, {
     texto: "So a Arlene veio, sem mais ninguem",
     dateUtc: "2026-01-10T00:00:00Z",
 });
+await salvarMensagem(db, {
+    key: "A:9",
+    chatId: "A",
+    messageId: 9,
+    reactionTotal: 0,
+    chatTitle: "Grupo A",
+    texto: "Nada a ver com nenhum dos dois nomes",
+    dateUtc: "2026-01-11T00:00:00Z",
+});
 
 const duasPalavras = await buscarTexto(db, { termo: "arlene lee", chatId: "A", limite: 10 });
 assert(
     duasPalavras.some((m) => m.messageId === 6),
-    "'arlene lee' acha mensagem com as palavras separadas e fora de ordem (Lee ... Arlene)"
+    "'arlene lee' acha mensagem com as duas palavras separadas e fora de ordem (Lee ... Arlene)"
 );
 assert(
     duasPalavras.some((m) => m.messageId === 7),
     "'arlene lee' continua achando a frase exata tambem"
 );
 assert(
-    !duasPalavras.some((m) => m.messageId === 8),
-    "'arlene lee' NAO acha mensagem que so tem 'arlene' sem 'lee'"
+    duasPalavras.some((m) => m.messageId === 8),
+    "'arlene lee' TAMBEM acha mensagem que so tem 'arlene' (OU logico, de proposito - busca mais ampla)"
 );
-assert(duasPalavras.length === 2, "'arlene lee' traz exatamente as 2 mensagens que tem as duas palavras (veio " + duasPalavras.length + ")");
+assert(
+    !duasPalavras.some((m) => m.messageId === 9),
+    "'arlene lee' NAO acha mensagem sem nenhuma das duas palavras"
+);
+assert(duasPalavras.length === 3, "'arlene lee' traz as 3 mensagens que tem pelo menos uma das palavras (veio " + duasPalavras.length + ")");
 
 // ---- idBaseDoChatId (copiada de painel_logic.js) ----
 // O link que abre a MENSAGEM EXATA (visto no codigo-fonte do Telegram Web,

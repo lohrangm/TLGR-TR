@@ -686,3 +686,25 @@ DIFERENTE do problema ja levantado antes (busca nativa achando mensagem
 que o nosso scan nao tem) - aquele continua em aberto e precisa ser
 checado com a tela "Verificar mensagem", nao foi resolvido nem afetado por
 essa correcao de busca com varias palavras.
+
+## Busca com varias palavras: de E logico pra OU logico (pedido do usuario)
+
+Depois de entender o "so 1 resultado" acima, usuario deu uma instrucao
+clara sobre como quer essa ferramenta: mais ampla, de proposito. No
+conceito dele, buscar "arlene lee" DEVE continuar trazendo "Darlene
+amaro"/"Marlene soares" (que so tem "arlene", nao tem "lee") - ele prefere
+resultado a mais (filtra visualmente depois) a resultado a menos, porque o
+problema real que motivou tudo isso e mensagem que deveria aparecer e nao
+aparece, nunca o contrario.
+
+Troquei `buscarTexto()` de E logico (`palavras.every(...)`, exigia TODAS
+as palavras) pra OU logico (`palavras.some(...)`, basta UMA aparecer).
+Busca de uma palavra so continua identica (sempre foi so substring). Teste
+em `test_indexeddb_logic.mjs` atualizado: "arlene lee" agora acha as 3
+mensagens que tem pelo menos uma das palavras (incluindo a que so tem
+"arlene" sem "lee"), e so exclui a que nao tem nenhuma das duas.
+
+Reforcando o que o usuario deixou explicito: essa mudanca e sobre
+PRECISAO da busca (quanto ela filtra), nao tem nada a ver com o problema
+de COBERTURA do scan (mensagem que a busca nativa acha e a nossa nem tem
+salva) - aquele segue em aberto, ver secao "Verificar mensagem" acima.
