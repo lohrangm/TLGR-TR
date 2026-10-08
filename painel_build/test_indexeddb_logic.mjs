@@ -146,7 +146,7 @@ function contarMensagensDoChat(db, chatId) {
     });
 }
 
-function buscarTop(db, { chatId, minimo, limite }) {
+function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte }) {
     return new Promise((resolve, reject) => {
         const resultados = [];
         const indice = transacao(db, "mensagens", "readonly").index("por_reacoes");
@@ -165,7 +165,9 @@ function buscarTop(db, { chatId, minimo, limite }) {
                 resolve(resultados);
                 return;
             }
-            if (!chatId || valor.chatId === chatId) {
+            const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
+            const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
+            if ((!chatId || valor.chatId === chatId) && bateData) {
                 resultados.push(valor);
             }
             cursor.continue();
@@ -216,6 +218,22 @@ assert(top3[0].chatId === "B" && top3[0].reactionTotal === 30, "primeira do grup
 // Limite respeitado
 const top4 = await buscarTop(db, { chatId: null, minimo: 1, limite: 2 });
 assert(top4.length === 2, "limite=2 retorna exatamente 2 (veio " + top4.length + ")");
+
+// Filtro de periodo (buscarTop) - 01-02 a 01-04 pega A:2(01-02), A:3(01-03) e B:1(01-04),
+// deixa de fora A:1(01-01) e B:2(01-05)
+const top5 = await buscarTop(db, { chatId: null, minimo: 1, limite: 10, dataDe: "2026-01-02", dataAte: "2026-01-04" });
+assert(top5.length === 3, "filtro de periodo em buscarTop retorna 3 mensagens (veio " + top5.length + ")");
+assert(
+    top5.every((m) => m.dateUtc.slice(0, 10) >= "2026-01-02" && m.dateUtc.slice(0, 10) <= "2026-01-04"),
+    "todas as retornadas do filtro de periodo em buscarTop estao dentro do intervalo"
+);
+
+// So dataDe (sem dataAte) - a partir de 01-05 em diante, so sobra B:2
+const top6 = await buscarTop(db, { chatId: null, minimo: 1, limite: 10, dataDe: "2026-01-05" });
+assert(
+    top6.length === 1 && top6[0].key === "B:2",
+    "so dataDe (buscarTop, sem dataAte) traz so quem bate a partir dali (veio " + top6.length + ")"
+);
 
 // ---- contarMensagensDoChat - base da tabela "o que ja esta salvo" ----
 const totalA = await contarMensagensDoChat(db, "A");

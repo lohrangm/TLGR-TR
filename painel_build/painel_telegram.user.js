@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.08.8
+// @version      2026.10.08.9
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -169484,7 +169484,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.08.8";
+window.TRP_VERSAO = "2026.10.08.9";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
@@ -169646,8 +169646,11 @@ window.TRP_VERSAO = "2026.10.08.8";
     }
 
     // Percorre o indice por_reacoes do maior pro menor, filtrando por chat (se
-    // informado) e por reactionTotal minimo, ate juntar "limite" resultados.
-    function buscarTop(db, { chatId, minimo, limite }) {
+    // informado), por reactionTotal minimo e por periodo (dataDe/dataAte, se
+    // informados), ate juntar "limite" resultados. Filtro de data aqui e so
+    // visual/de recorte, igual ao de buscarTexto() - nao afeta o que fica
+    // salvo, so o que aparece nesta lista.
+    function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte }) {
         return new Promise((resolve, reject) => {
             const resultados = [];
             const indice = transacao(db, "mensagens", "readonly").index("por_reacoes");
@@ -169666,7 +169669,9 @@ window.TRP_VERSAO = "2026.10.08.8";
                     resolve(resultados); // indice esta ordenado, dai pra baixo so vem menor ainda
                     return;
                 }
-                if (!chatId || valor.chatId === chatId) {
+                const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
+                const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
+                if ((!chatId || valor.chatId === chatId) && bateData) {
                     resultados.push(valor);
                 }
                 cursor.continue();
@@ -169894,7 +169899,15 @@ window.TRP_VERSAO = "2026.10.08.8";
         // de corte nenhum.
         areaRolavel = document.createElement("div");
         areaRolavel.id = "trp-area-rolavel";
-        areaRolavel.style.cssText = "overflow:auto;flex:1;min-height:0;";
+        // overflow-x:hidden e cinto-de-seguranca contra mensagem com palavra
+        // comprida sem espaco (link, texto colado) que force a largura da
+        // caixa alem do previsto - sem isso aparecia uma barra de rolagem
+        // horizontal, empurrando o usuario pra uma area vazia a direita. A
+        // quebra de linha forcada nos textos (overflow-wrap:anywhere, ver
+        // criarItemResultado() e as listas de resultado) ja deveria evitar
+        // que isso aconteça, mas o corte aqui garante mesmo se algum texto
+        // escapar.
+        areaRolavel.style.cssText = "overflow-y:auto;overflow-x:hidden;flex:1;min-height:0;";
         painel.appendChild(areaRolavel);
 
         adicionarBotoesNavegacao();
@@ -169931,9 +169944,16 @@ window.TRP_VERSAO = "2026.10.08.8";
             fontWeight: "700",
             cursor: "pointer",
             boxShadow: "0 2px 10px rgba(0,0,0,0.35)",
+            // Comecam escondidos - so fazem sentido quando a area rolavel tem
+            // mais conteudo do que cabe na tela. atualizarVisibilidadeBotoesNavegacao()
+            // (chamada pelo ResizeObserver em corpoDoPainel()) mostra os dois
+            // assim que detecta rolagem de verdade disponivel, e esconde de
+            // volta se o conteudo encolher a ponto de nao precisar mais.
+            display: "none",
         };
 
         const botaoTopo = document.createElement("button");
+        botaoTopo.id = "trp-botao-nav-topo";
         botaoTopo.textContent = "↑";
         botaoTopo.title = "Voltar ao topo";
         Object.assign(botaoTopo.style, estiloBase, { bottom: "56px" });
@@ -169943,6 +169963,7 @@ window.TRP_VERSAO = "2026.10.08.8";
         painel.appendChild(botaoTopo);
 
         const botaoFim = document.createElement("button");
+        botaoFim.id = "trp-botao-nav-fim";
         botaoFim.textContent = "↓";
         botaoFim.title = "Ir pro fim";
         Object.assign(botaoFim.style, estiloBase, { bottom: "16px" });
@@ -169950,6 +169971,21 @@ window.TRP_VERSAO = "2026.10.08.8";
             areaRolavel.scrollTop = areaRolavel.scrollHeight;
         });
         painel.appendChild(botaoFim);
+    }
+
+    // Mostra as setinhas de navegacao so quando a area rolavel realmente tem
+    // mais conteudo do que cabe na tela (ou seja, so quando rolar faz
+    // sentido) - escondidas na tela inicial e em qualquer lista curta. +1 e
+    // margem pra arredondamento de subpixel nao contar como "tem rolagem" por
+    // 1px de diferenca.
+    function atualizarVisibilidadeBotoesNavegacao() {
+        if (!painel || !areaRolavel) return;
+        const temRolagem = areaRolavel.scrollHeight > areaRolavel.clientHeight + 1;
+        const exibir = temRolagem ? "" : "none";
+        const botaoTopo = painel.querySelector("#trp-botao-nav-topo");
+        const botaoFim = painel.querySelector("#trp-botao-nav-fim");
+        if (botaoTopo) botaoTopo.style.display = exibir;
+        if (botaoFim) botaoFim.style.display = exibir;
     }
 
     function renderizarCabecalho() {
@@ -170021,7 +170057,20 @@ window.TRP_VERSAO = "2026.10.08.8";
         if (!corpo) {
             corpo = document.createElement("div");
             corpo.id = "trp-corpo";
+            // overflow-wrap:anywhere quebra ate uma palavra sem espaco (link,
+            // texto colado) que de outra forma estouraria a largura da caixa -
+            // ver comentario em areaRolavel sobre a barra de rolagem
+            // horizontal que isso evita.
+            corpo.style.cssText = "overflow-wrap:anywhere;word-break:break-word;";
             areaRolavel.appendChild(corpo);
+            // O tamanho de #trp-corpo muda toda vez que uma tela troca de
+            // conteudo ou uma lista e recarregada - observar ele (em vez de
+            // cada call site que muda a lista) e o jeito mais simples de
+            // saber, de forma centralizada, se a area rolavel ficou mais alta
+            // que a parte visivel dela (ver atualizarVisibilidadeBotoesNavegacao).
+            if (window.ResizeObserver) {
+                new ResizeObserver(atualizarVisibilidadeBotoesNavegacao).observe(corpo);
+            }
         }
         corpo.innerHTML = "";
         return corpo;
@@ -170714,6 +170763,20 @@ window.TRP_VERSAO = "2026.10.08.8";
         }
         const inputMinimo = filtros.querySelector("#trp-filtro-minimo");
 
+        // Mesmo filtro de periodo de "Buscar mensagens" - replicado aqui
+        // porque as duas telas de pesquisa compartilham praticamente todos
+        // os recursos. Em branco nos dois lados = sem filtro de data.
+        const filtrosData = document.createElement("div");
+        filtrosData.style.cssText = "display:flex;gap:8px;margin-bottom:10px;";
+        filtrosData.innerHTML =
+            '<div style="flex:1;"><label style="display:block;color:#8b92a3;font-size:11px;margin-bottom:2px;">De (data)</label>' +
+            '<input id="trp-top-data-de" type="date" style="width:100%;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;box-sizing:border-box;"></div>' +
+            '<div style="flex:1;"><label style="display:block;color:#8b92a3;font-size:11px;margin-bottom:2px;">Ate (data)</label>' +
+            '<input id="trp-top-data-ate" type="date" style="width:100%;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;box-sizing:border-box;"></div>';
+        corpo.appendChild(filtrosData);
+        const inputDataDe = filtrosData.querySelector("#trp-top-data-de");
+        const inputDataAte = filtrosData.querySelector("#trp-top-data-ate");
+
         const lista = document.createElement("div");
         corpo.appendChild(lista);
 
@@ -170748,7 +170811,9 @@ window.TRP_VERSAO = "2026.10.08.8";
             }
             const chatId = selectGrupo.value || null;
             const minimo = parseInt(inputMinimo.value, 10) || 1;
-            const mensagens = await buscarTop(db, { chatId, minimo, limite: limiteAtual });
+            const dataDe = inputDataDe.value || null;
+            const dataAte = inputDataAte.value || null;
+            const mensagens = await buscarTop(db, { chatId, minimo, limite: limiteAtual, dataDe, dataAte });
             if (!mensagens.length) {
                 lista.innerHTML = '<div style="color:#8b92a3;">Nenhuma mensagem encontrada com esse filtro.</div>';
                 return;
@@ -170810,6 +170875,14 @@ window.TRP_VERSAO = "2026.10.08.8";
             atualizarLista();
         });
         inputMinimo.addEventListener("change", () => {
+            limiteAtual = 50;
+            atualizarLista();
+        });
+        inputDataDe.addEventListener("change", () => {
+            limiteAtual = 50;
+            atualizarLista();
+        });
+        inputDataAte.addEventListener("change", () => {
             limiteAtual = 50;
             atualizarLista();
         });
@@ -171168,7 +171241,7 @@ window.TRP_VERSAO = "2026.10.08.8";
         const aviso = document.createElement("div");
         aviso.style.cssText = "color:#8b92a3;margin-bottom:10px;";
         aviso.textContent =
-            'Busca GLOBAL do proprio Telegram em canais/supergrupos PUBLICOS que essa conta nao participa (grupo fechado nao e alcancado). Segundo o proprio blog do Telegram (ago/2025), esse recurso "e inicialmente disponivel so pra contas Premium" - sem Premium a busca falha com erro de conta Premium exigida, mesmo por hashtag. Com Premium, ainda tem uma cota diaria gratis e depois cobra em Telegram Stars.';
+            'Busca GLOBAL do proprio Telegram em canais/supergrupos PUBLICOS que essa conta nao participa (grupo fechado nao e alcancado). Segundo o proprio blog do Telegram (ago/2025), esse recurso "e inicialmente disponivel so pra contas Premium" - na pratica (testado aqui), isso parece valer so pro modo de TEXTO LIVRE: busca por HASHTAG funciona mesmo sem Premium, so a por texto livre falha com erro de conta Premium exigida. Com Premium, o texto livre ainda tem uma cota diaria gratis e depois cobra em Telegram Stars (a busca por hashtag, pelo visto, nao tem esse custo documentado).';
         corpo.appendChild(aviso);
 
         const statusCota = document.createElement("div");

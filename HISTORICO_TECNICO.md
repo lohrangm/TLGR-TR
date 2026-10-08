@@ -1027,3 +1027,66 @@ entao nunca existe scroll nenhum pra clampar ou restaurar -
 foram removidos, ficaram sem uso.
 
 Versao 2026.10.08.8.
+
+## v2026.10.08.9: barra de rolagem horizontal, setinhas so quando tem rolagem de verdade, filtro de periodo tambem em "Ver top reacoes", texto sobre Premium/hashtag corrigido
+
+Confirmado o motivo de a v2026.10.08.8 nao ter aparecido pro usuario: o
+Tampermonkey (5.5.0) nao tinha buscado atualizacao desde a primeira vez -
+nao existe um botao direto de "check for updates" na aba Utilitarios
+dessa versao. Resolvido reimportando o arquivo .user.js direto pela
+mesma aba ("Importar do arquivo"), que sempre funciona independente do
+mecanismo de auto-update.
+
+**Barra de rolagem horizontal**: mensagem com uma "palavra" comprida sem
+espaco (link, texto colado) nao quebra sozinha por padrao em CSS -
+estoura a largura da caixa mesmo com `flex:1;min-width:0` no container,
+abrindo uma barra de rolagem horizontal que levava o usuario pra uma
+area vazia a direita. Conserto: `overflow-wrap:anywhere;word-break:break-word`
+em `#trp-corpo` (unico lugar, ja que toda tela aninha o conteudo dentro
+dele - cobre "Ver top reacoes", "Buscar mensagens" e "Busca avancada" de
+uma vez, por heranca de CSS) e `overflow-x:hidden` na area rolavel como
+cinto de seguranca extra.
+
+**Setinhas sempre visiveis, inclusive sem precisar rolar**: as setinhas
+agora comecam escondidas (`display:none`) e so aparecem quando a area
+rolavel realmente tem mais conteudo do que cabe na tela
+(`scrollHeight > clientHeight`). Em vez de recalcular isso manualmente
+em cada tela/lista, um unico `ResizeObserver` observa `#trp-corpo` (que
+muda de tamanho toda vez que uma tela troca ou uma lista e recarregada)
+e chama `atualizarVisibilidadeBotoesNavegacao()` sozinho sempre que o
+tamanho muda - no mostra/some automaticamente, sem precisar instrumentar
+cada ponto que altera a lista.
+
+**Filtro de periodo replicado em "Ver top reacoes"**: mesmo campo De/Ate
+que ja existia em "Buscar mensagens", agora tambem em `buscarTop()` e na
+tela de resultados - as duas ferramentas de pesquisa compartilham os
+mesmos filtros.
+
+**Duvida sobre "Ver top reacoes" perder mensagem igual a busca por
+palavra-chave perdia**: NAO e o mesmo problema. Em "Buscar mensagens" o
+buraco era de DADO (mensagem que nunca tinha sido salva localmente, so
+a busca ao vivo no servidor achava). Em "Ver top reacoes" nao tem busca
+ao vivo nenhuma - e tudo local, e o cursor de `buscarTop()` sempre
+percorre o indice por_reacoes inteiro do maior pro menor; o unico limite
+e QUANTOS resultados entram na tela de uma vez (`limite`, que cresce
+com "Mostrar mais"). Ou seja, nenhuma mensagem fica "escondida" pra
+sempre - só requer clicar em "Mostrar mais" (ou aumentar o minimo de
+reacoes) o suficiente pra alcancar mensagens de grupos menos
+representados quando "Todos os grupos" esta selecionado. Nao precisou
+de mudanca de codigo pra isso, so essa confirmacao.
+
+**Texto sobre Premium/hashtag na "Busca avancada" corrigido**: o aviso
+afirmava (baseado no blog do Telegram) que a restricao de conta Premium
+valia inclusive pra busca por hashtag - o usuario testou e reportou o
+contrario: funciona por hashtag mesmo sem Premium, e so falha no modo de
+texto livre. Texto do aviso corrigido pra refletir o que foi observado
+na pratica.
+
+**Pedido nao implementado (fica pra depois)**: mostrar numero de
+membros/participantes dos grupos/canais que aparecem na "Busca
+avancada". Exigiria uma chamada extra por canal (`channels.GetFullChannel`
+ou parecido) que pode nao vir de graca nem ser rapida pra uma lista
+inteira de resultados - precisa investigar custo/limite antes de
+implementar.
+
+Versao 2026.10.08.9.
