@@ -745,3 +745,53 @@ ficar claro que e novo.
 Falha na busca ao vivo (chat nao resolvido, erro de rede, etc.) nao quebra
 a busca local - aparece so um aviso em vermelho acima dos resultados
 locais, que continuam normais.
+
+## Causa raiz de toda a confusao de versao: metodo de atualizacao nunca funcionou
+
+Depois de varias entregas parecendo "nao fazer efeito", descobrimos a
+causa: o usuario estava atualizando copiando o conteudo inteiro do
+`painel_telegram.user.js` (8+ MB de texto) do Bloco de Notas e colando
+direto no editor do Tampermonkey (Firefox). Um arquivo desse tamanho
+colado via Ctrl+V numa caixa de texto de extensao de navegador e um
+tamanho fora do normal pra esse tipo de campo - trava, corta ou mistura
+com o conteudo antigo sem avisar erro nenhum. Confirmado: a aba do editor
+mostrava "Telegram Top Reacoes - Painel **2.0.0**" - a versao original, de
+antes dessa sessao inteira. Ou seja, NENHUMA correcao feita nesta sessao
+tinha rodado de verdade no navegador do usuario ate esse ponto - toda a
+discussao sobre "ficou pior"/"nao mudou nada" foi, na pratica, sempre
+contra o codigo antigo.
+
+Jeito certo de instalar sem copiar/colar: Tampermonkey Dashboard → aba
+"Utilitarios" → "Importar do arquivo" → escolhe o `.user.js` direto do
+disco.
+
+## Atualizacao automatica via @updateURL/@downloadURL (pedido do usuario)
+
+Usuario perguntou se dava pra nao precisar trazer o arquivo manualmente
+toda vez. Solucao: Tampermonkey suporta `@updateURL`/`@downloadURL` no
+cabecalho `==UserScript==` - aponta pra uma URL http(s), e o proprio
+Tampermonkey confere periodicamente (ou na hora, com "Check for userscript
+updates" no Dashboard) se o `@version` de la e mais novo que o instalado,
+oferecendo atualizar sozinho.
+
+Nao tem repositorio remoto (git sem remote configurado) nem motivo pra
+criar um so pra isso, entao a URL aponta pra um servidor HTTP local:
+`http://localhost:8787/painel_telegram.user.js`. `montar_userscript.mjs`
+ganhou a constante `URL_ATUALIZACAO` (mesma ideia de fonte unica que
+`VERSAO`) injetada nas duas linhas novas do cabecalho.
+
+Criado `iniciar_servidor_userscript.bat` na raiz do projeto (.bat sem
+emoji, como preferido) - so entra na pasta `painel_build` e sobe
+`python -m http.server 8787` (ja confirmado instalado na maquina do
+usuario, nao precisa instalar nada). Precisa estar rodando no momento em
+que o Tampermonkey checar - se nao estiver, a checagem so falha em
+silencio, sem quebrar nada, e tenta de novo na proxima vez (automatica ou
+manual).
+
+**Esse metodo ainda exige UMA ultima importacao manual** (via "Importar
+do arquivo", nao copia/cola) - e so depois dela, com o `@updateURL` ja
+dentro do script instalado, que o Tampermonkey passa a saber aonde olhar
+sozinho. Depois dessa vez, o fluxo normal vira: liga o `.bat`, abre o
+Tampermonkey Dashboard, pede "Check for userscript updates" no script
+"Telegram Top Reacoes - Painel", confirma a atualizacao se aparecer, e so
+ai da F5 no Telegram Web.
