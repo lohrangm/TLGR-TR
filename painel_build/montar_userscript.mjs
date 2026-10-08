@@ -8,10 +8,19 @@
 
 import { readFileSync, writeFileSync } from "fs";
 
+// Fonte unica da versao: usada tanto no @version do cabecalho
+// ==UserScript== (o que o Tampermonkey mostra no dashboard dele) quanto no
+// numero exibido dentro do proprio painel (window.TRP_VERSAO, lido por
+// painel_logic.js). Formato AAAA.MM.DD.N (N = numero da entrega naquele
+// dia, comecando em 1) - BUMP AQUI a cada vez que gerar uma nova entrega,
+// pra quem esta testando saber se o Tampermonkey ja pegou a versao nova ou
+// ainda esta rodando uma antiga.
+const VERSAO = "2026.10.08.1";
+
 const CABECALHO = `// ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2.0.0
+// @version      ${VERSAO}
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -31,6 +40,7 @@ const painel = readFileSync(new URL("./painel_logic.js", import.meta.url), "utf8
 const conteudoFinal =
     CABECALHO +
     bundle +
+    `\nwindow.TRP_VERSAO = ${JSON.stringify(VERSAO)};\n` +
     "\n// ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====\n\n" +
     painel;
 

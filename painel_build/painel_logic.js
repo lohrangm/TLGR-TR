@@ -8,6 +8,16 @@
 
     const { TelegramClient, StringSession, PromisedWebSockets, Api } = window.TeleprotoBridge;
 
+    // Numero da versao, pra saber na hora (olhando o topo do painel) se o
+    // Tampermonkey ja pegou a atualizacao mais nova ou se ainda esta rodando
+    // uma versao antiga - sem isso nao tinha como diferenciar "a correcao
+    // nao funcionou" de "o script antigo ainda nao foi atualizado de
+    // verdade". window.TRP_VERSAO e definido por montar_userscript.mjs (uma
+    // unica fonte da verdade, usada tambem no @version do cabecalho
+    // ==UserScript==) - "dev" aqui e so um fallback se alguem rodar
+    // painel_logic.js fora do userscript montado.
+    const VERSAO_PAINEL = window.TRP_VERSAO || "dev";
+
     const CHAVE_API_ID = "trp_api_id";
     const CHAVE_API_HASH = "trp_api_hash";
     const CHAVE_SESSAO = "trp_session";
@@ -401,6 +411,9 @@
             "display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;";
         cabecalho.innerHTML =
             '<strong>Top Reacoes</strong>' +
+            '<span style="color:#8b92a3;font-size:11px;margin-left:6px;">v' +
+            escapeHtml(VERSAO_PAINEL) +
+            "</span>" +
             '<div style="display:flex;align-items:center;gap:12px;">' +
             '<button id="trp-sair" style="display:none;background:none;border:none;color:#8b92a3;cursor:pointer;font-size:11px;padding:0;">sair</button>' +
             '<button id="trp-fechar" style="background:none;border:none;color:#8b92a3;cursor:pointer;font-size:16px;">x</button>' +

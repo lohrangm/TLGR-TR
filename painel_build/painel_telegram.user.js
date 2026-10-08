@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2.0.0
+// @version      2026.10.08.1
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -169482,6 +169482,8 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
+window.TRP_VERSAO = "2026.10.08.1";
+
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
 (function () {
@@ -169493,6 +169495,16 @@ store2/dist/store2.js:
     // local, sem Python, sem conexao externa de IP pra manter aberta.
 
     const { TelegramClient, StringSession, PromisedWebSockets, Api } = window.TeleprotoBridge;
+
+    // Numero da versao, pra saber na hora (olhando o topo do painel) se o
+    // Tampermonkey ja pegou a atualizacao mais nova ou se ainda esta rodando
+    // uma versao antiga - sem isso nao tinha como diferenciar "a correcao
+    // nao funcionou" de "o script antigo ainda nao foi atualizado de
+    // verdade". window.TRP_VERSAO e definido por montar_userscript.mjs (uma
+    // unica fonte da verdade, usada tambem no @version do cabecalho
+    // ==UserScript==) - "dev" aqui e so um fallback se alguem rodar
+    // painel_logic.js fora do userscript montado.
+    const VERSAO_PAINEL = window.TRP_VERSAO || "dev";
 
     const CHAVE_API_ID = "trp_api_id";
     const CHAVE_API_HASH = "trp_api_hash";
@@ -169887,6 +169899,9 @@ store2/dist/store2.js:
             "display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;";
         cabecalho.innerHTML =
             '<strong>Top Reacoes</strong>' +
+            '<span style="color:#8b92a3;font-size:11px;margin-left:6px;">v' +
+            escapeHtml(VERSAO_PAINEL) +
+            "</span>" +
             '<div style="display:flex;align-items:center;gap:12px;">' +
             '<button id="trp-sair" style="display:none;background:none;border:none;color:#8b92a3;cursor:pointer;font-size:11px;padding:0;">sair</button>' +
             '<button id="trp-fechar" style="background:none;border:none;color:#8b92a3;cursor:pointer;font-size:16px;">x</button>' +

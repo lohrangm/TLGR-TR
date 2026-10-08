@@ -649,3 +649,40 @@ identica a antes (array de 1 palavra so). Teste novo em
 `test_indexeddb_logic.mjs` reproduz o caso: mensagem com "lee" antes de
 "arlene" e sem estarem juntas agora e encontrada buscando "arlene lee",
 mensagem so com "arlene" (sem "lee") continua de fora.
+
+## Numero de versao visivel no topo do painel (pedido do usuario)
+
+Usuario testou a correcao acima, confirmou que tinha atualizado o
+userscript no Tampermonkey, e mesmo assim viu o mesmo resultado (1
+mensagem) de antes da correcao - sem jeito de saber, so olhando, se era
+"a correcao nao resolveu" ou "o Tampermonkey nao pegou a versao nova de
+verdade". Pediu um numero de versao visivel no proprio painel pra isso
+ficar claro de cara.
+
+`montar_userscript.mjs` agora tem uma unica constante `VERSAO` (formato
+`AAAA.MM.DD.N`, N = numero da entrega naquele dia) usada em DOIS lugares:
+o `@version` do cabecalho `==UserScript==` (o que o proprio Tampermonkey
+mostra no dashboard dele, em "gerenciar extensoes") e uma linha
+`window.TRP_VERSAO = "..."` injetada entre o bundle do teleproto e o
+`painel_logic.js`. `painel_logic.js` le isso em `VERSAO_PAINEL` e mostra
+"v2026.10.08.1" ao lado do titulo "Top Reacoes" no cabecalho do painel -
+que fica fixo em toda tela (`renderizarCabecalho()` e chamado uma vez em
+`montarPainel()`, nao por tela).
+
+**IMPORTANTE pra manutencao futura**: a partir de agora, BUMP a constante
+`VERSAO` em `montar_userscript.mjs` toda vez que gerar uma entrega nova
+(mesmo dia, N+1; dia novo, N=1) e rodar `node montar_userscript.mjs` de
+novo antes de entregar. Sem isso o numero fica parado e perde a
+utilidade.
+
+Sobre o caso especifico que gerou esse pedido (1 resultado pra "arlene
+lee" mesmo depois de atualizar): com a correcao de palavras separadas (E
+logico), "Darlene amaro" e "Marlene soares" contem a substring "arlene"
+(ex.: "d-ARLENE", "m-ARLENE") mas NAO contem "lee" em lugar nenhum - entao
+o filtro corretamente as exclui ao buscar "arlene lee". Se no banco local
+so existe 1 mensagem com as duas palavras ao mesmo tempo, 1 resultado e o
+numero certo, nao e bug nem reaparecimento do problema antigo. Isso e
+DIFERENTE do problema ja levantado antes (busca nativa achando mensagem
+que o nosso scan nao tem) - aquele continua em aberto e precisa ser
+checado com a tela "Verificar mensagem", nao foi resolvido nem afetado por
+essa correcao de busca com varias palavras.
