@@ -628,3 +628,24 @@ historico antigo) ainda nao tinha terminado nesse grupo na hora do log.
 Isso e esperado/normal (a Fase 1 avanca aos poucos, salvando checkpoint a
 cada 500 mensagens, e continua de onde parou na proxima vez que o scan
 rodar) - nao e bug, so precisa deixar o scan rodar mais.
+
+## "Buscar mensagens" com mais de uma palavra sumia com resultados (corrigido)
+
+Usuario testou a nova tela "Verificar mensagem" buscando "arlene lee" (duas
+palavras) no mesmo grupo onde antes tinha buscado so "arlene", e achou que
+"ficou pior" - so 1 resultado em vez dos 5 anteriores. Nao era regressao de
+nenhuma mudanca dessa sessao: era `buscarTexto()` tratando o termo inteiro
+como UMA substring so, exigindo que "arlene" e "lee" aparecessem juntas,
+coladas, nessa ordem exata, no texto. "Arlene Lee" bate; uma mensagem tipo
+"Lee, viu novidade da Arlene?" (as duas palavras presentes, mas separadas e
+fora de ordem) nao batia - e e exatamente esse tipo de mensagem que some
+quando voce refina a busca com mais uma palavra.
+
+Corrigido: o termo agora e dividido em palavras (por espaco) e cada uma e
+checada separada contra o texto - a mensagem entra no resultado se TODAS as
+palavras aparecerem em qualquer lugar do texto (E logico), nao precisa
+estar juntas nem na mesma ordem. Busca de uma palavra so continua
+identica a antes (array de 1 palavra so). Teste novo em
+`test_indexeddb_logic.mjs` reproduz o caso: mensagem com "lee" antes de
+"arlene" e sem estarem juntas agora e encontrada buscando "arlene lee",
+mensagem so com "arlene" (sem "lee") continua de fora.

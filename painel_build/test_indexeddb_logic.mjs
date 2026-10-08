@@ -86,7 +86,9 @@ function normalizarTexto(texto) {
 
 function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor }) {
     return new Promise((resolve, reject) => {
-        const termoNormalizado = normalizarTexto(termo);
+        const palavras = normalizarTexto(termo)
+            .split(/\s+/)
+            .filter(Boolean);
         const minimoReacoes = minimo || 0;
         const resultados = [];
         let visitados = 0;
@@ -109,7 +111,9 @@ function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor }) {
             visitados++;
             const valor = cursor.value;
             const texto = valor.texto || valor.textPreview || "";
-            if ((valor.reactionTotal || 0) >= minimoReacoes && normalizarTexto(texto).includes(termoNormalizado)) {
+            const textoNormalizado = normalizarTexto(texto);
+            const bateTodasAsPalavras = palavras.length > 0 && palavras.every((p) => textoNormalizado.includes(p));
+            if ((valor.reactionTotal || 0) >= minimoReacoes && bateTodasAsPalavras) {
                 resultados.push(valor);
             }
             cursor.continue();
@@ -261,6 +265,54 @@ assert(filtradoPorChatErrado.length === 0, "filtro por chat respeita o grupo esc
 
 const semResultado = await buscarTexto(db, { termo: "termoquenaoexisteemlugarnenhum", chatId: null, limite: 10 });
 assert(semResultado.length === 0, "termo inexistente retorna lista vazia");
+
+// ---- buscarTexto com termo de mais de uma palavra - reproduz o caso
+// relatado pelo usuario: buscar "arlene lee" sumia com resultados que
+// buscar so "arlene" trazia, porque o termo inteiro era tratado como uma
+// unica substring exigindo as palavras juntas e nessa ordem. Agora cada
+// palavra e checada separada (E logico), entao a ordem/posicao nao importa.
+await salvarMensagem(db, {
+    key: "A:6",
+    chatId: "A",
+    messageId: 6,
+    reactionTotal: 0,
+    chatTitle: "Grupo A",
+    texto: "Lee, voce tem noticia da Arlene?",
+    dateUtc: "2026-01-08T00:00:00Z",
+});
+await salvarMensagem(db, {
+    key: "A:7",
+    chatId: "A",
+    messageId: 7,
+    reactionTotal: 0,
+    chatTitle: "Grupo A",
+    texto: "Arlene Lee confirmou presenca",
+    dateUtc: "2026-01-09T00:00:00Z",
+});
+await salvarMensagem(db, {
+    key: "A:8",
+    chatId: "A",
+    messageId: 8,
+    reactionTotal: 0,
+    chatTitle: "Grupo A",
+    texto: "So a Arlene veio, sem mais ninguem",
+    dateUtc: "2026-01-10T00:00:00Z",
+});
+
+const duasPalavras = await buscarTexto(db, { termo: "arlene lee", chatId: "A", limite: 10 });
+assert(
+    duasPalavras.some((m) => m.messageId === 6),
+    "'arlene lee' acha mensagem com as palavras separadas e fora de ordem (Lee ... Arlene)"
+);
+assert(
+    duasPalavras.some((m) => m.messageId === 7),
+    "'arlene lee' continua achando a frase exata tambem"
+);
+assert(
+    !duasPalavras.some((m) => m.messageId === 8),
+    "'arlene lee' NAO acha mensagem que so tem 'arlene' sem 'lee'"
+);
+assert(duasPalavras.length === 2, "'arlene lee' traz exatamente as 2 mensagens que tem as duas palavras (veio " + duasPalavras.length + ")");
 
 // ---- idBaseDoChatId (copiada de painel_logic.js) ----
 // O link que abre a MENSAGEM EXATA (visto no codigo-fonte do Telegram Web,

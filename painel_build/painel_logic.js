@@ -163,6 +163,16 @@
     // por palavra inteira, as vezes nao acha mensagem que claramente existe
     // (ver HISTORICO_TECNICO.md). So enxerga o que ja foi salvo localmente.
     //
+    // Termo com mais de uma palavra ("arlene lee") NAO exige que elas
+    // apareçam juntas e nessa ordem no texto - cada palavra e checada
+    // separado, e a mensagem so entra se TODAS aparecerem em algum lugar do
+    // texto (E logico, qualquer ordem/posicao). Antes disso era um unico
+    // .includes() do termo inteiro, que exigia a frase exata adjacente -
+    // "arlene lee" so batia com "Arlene Lee" literal e ficava mais estreito
+    // que buscar so "arlene" (que pega "Darlene", "Marlene" etc. tambem),
+    // dando a falsa impressao de que resultados "sumiram" ao refinar a
+    // busca com mais uma palavra.
+    //
     // Sem chatId, o cursor percorre a loja inteira pela chave primaria (que
     // comeca com o chatId), entao visita TODAS as mensagens de um grupo antes
     // de passar pro proximo. Se esse primeiro grupo sozinho ja tiver
@@ -173,7 +183,9 @@
     // suficiente pra sair do primeiro grupo e alcançar os demais.
     function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor }) {
         return new Promise((resolve, reject) => {
-            const termoNormalizado = normalizarTexto(termo);
+            const palavras = normalizarTexto(termo)
+                .split(/\s+/)
+                .filter(Boolean);
             const minimoReacoes = minimo || 0;
             const resultados = [];
             let visitados = 0;
@@ -196,7 +208,12 @@
                 visitados++;
                 const valor = cursor.value;
                 const texto = valor.texto || valor.textPreview || "";
-                if ((valor.reactionTotal || 0) >= minimoReacoes && normalizarTexto(texto).includes(termoNormalizado)) {
+                const textoNormalizado = normalizarTexto(texto);
+                // palavras.length === 0 (termo vazio/so espaco) nunca bate -
+                // sem isso, .every() num array vazio da true e a "busca"
+                // devolveria o banco inteiro.
+                const bateTodasAsPalavras = palavras.length > 0 && palavras.every((p) => textoNormalizado.includes(p));
+                if ((valor.reactionTotal || 0) >= minimoReacoes && bateTodasAsPalavras) {
                     resultados.push(valor);
                 }
                 cursor.continue();
