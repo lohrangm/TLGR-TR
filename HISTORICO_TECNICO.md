@@ -541,3 +541,90 @@ de tela (que só limpa o `#trp-corpo`) e some sozinho quando o painel fecha
 (`painel.remove()` leva os filhos junto). Chamado uma vez em
 `montarPainel()`, ao lado de `renderizarCabecalho()`. Clique faz
 `painel.scrollTop = 0`.
+
+## Busca nativa achou mensagem que a nossa busca local nao achou - nova tela "Verificar mensagem"
+
+Usuario reportou (com prints) que buscando "arlene" no grupo "Orfãos Do
+Exclusivo", a busca nativa do Telegram (escopo "This Group") achou 3
+resultados e a nossa "Buscar mensagens" achou 5 - mas os conjuntos nao
+batiam: a nossa achava coisas que a nativa nao achava (esperado, e
+diferenca de substring vs palavra-inteira, ver secao mais acima), MAS a
+nativa tambem achava pelo menos uma mensagem ("Deleted Account", texto
+"...arlene1ee...") que nao aparecia em NENHUM dos nossos 5 resultados.
+Isso e diferente de "algoritmo de busca difere" - se a mensagem existe e
+bate com o termo mas nao esta nos nossos resultados, ou ela nao foi
+escaneada (buraco de cobertura), ou foi escaneada com o texto errado/vazio.
+
+Theory sem confirmar (NAO proseguida): tentei estimar, so pelo log de
+console colado pelo usuario (que mostra `lastScannedMessageId` subindo
+429318 -> 966151 -> 1085413 ao longo de varias rodadas de scan desse
+grupo, com o backfill do historico antigo ja concluido,
+`textoCompletoAte === backfillAlvo`), se a mensagem em questao
+simplesmente ainda nao tinha sido alcancada pelo scan incremental. Nao da
+pra concluir isso so pelo log - precisaria do ID exato da mensagem em
+questao, que nao aparece no print nem no log. Em vez de chutar, criei uma
+ferramenta pra responder isso com certeza, pra esse caso e qualquer outro
+parecido no futuro.
+
+**Nova tela "Verificar mensagem (local vs. ao vivo)"**: usuario escolhe o
+grupo (so aparecem os ja escaneados), cola o link da mensagem (ou so
+digita o ID - a tela tenta reconhecer o formato `t.me/c/<id>/<msg>` e
+tambem o link que o nosso proprio botao "abrir" gera,
+`web.telegram.org/...#<id>?post=<msg>`, preenchendo o campo de ID e
+selecionando o grupo certo sozinha quando reconhece) e clica "Verificar".
+A tela mostra dois blocos lado a lado:
+
+- **No nosso banco local**: existe ou nao (`buscarMensagem()`, novo
+  helper, get direto pela chave `chatId:messageId` na loja `mensagens`);
+  se existe, mostra texto/data/reacoes salvos.
+- **Ao vivo no Telegram agora**: busca a mensagem de verdade via
+  `cliente.getMessages(entidade, { ids: [messageId] })` (mesmo client
+  MTProto que o scan usa) e mostra texto/data/reacoes atuais.
+  `encontrarEntidadePorChatId()` (novo helper) itera os dialogs da conta
+  ate achar o `entity` certo pra passar pro `getMessages` - precisa disso
+  porque nao da pra montar o `InputPeer` so com o chatId numerico sem o
+  `access_hash`, que so vem iterando os dialogs (mesma limitacao que ja
+  existia na busca avancada).
+
+Se der "nao encontrada" no local E "existe" no ao-vivo, a tela avisa na
+hora: isso confirma um buraco real de scan (nao falta so rodar o scan de
+novo se o scan incremental ja passou da data - nesse caso sim seria bug
+de verdade). Se os dois "existem" mas o texto bate diferente, avisa que
+provavelmente foi editada depois do scan (ou falhou a captura na hora).
+
+Isso NAO resolve sozinho o caso especifico que o usuario reportou -
+resolve a FERRAMENTA de diagnostico. Falta ele rodar "Verificar mensagem"
+com o grupo + ID da mensagem "Deleted Account" (ou a "Vitor", 25/03/2025)
+pra saber de verdade se e buraco de scan ou outra coisa, antes de decidir
+se precisa mexer em mais alguma coisa.
+
+## Erro "Erro de seguranca ... file:///" no console, associado ao grupo "Vip OF"
+
+Usuario colou um log de console com essa linha, associada ao chatId
+`-1002621491696` ("Vip OF"):
+`Erro de seguranca: O conteudo em https://web.telegram.org/k/#-2621491696
+nao pode carregar nem criar link para file:///.`
+
+Reparando no formato: o link que a nossa `idBaseDoChatId()` gera pra esse
+chatId seria `2621491696` (tira o "-100" do inicio, sem sinal nenhum) +
+`?post=<id da mensagem>` no final. O que aparece no erro e
+`-2621491696`, SEM o `?post=...` e COM um sinal de "-" que a nossa funcao
+nunca deixaria sobrar nesse caso. Ou seja, esse texto de URL no erro nao
+bate com o que o nosso codigo gera - tudo indica que e o proprio
+Telegram Web reescrevendo/reinterpretando o hash da pagina (por exemplo,
+ao tentar resolver um chat que ainda nao esta no cache local dele) e
+falhando sozinho, nao um bug na nossa `idBaseDoChatId()` ou no botao
+"abrir". Nao investiguei mais fundo porque e um erro que vem de dentro do
+proprio app do Telegram, fora do nosso controle - se continuar
+acontecendo especificamente ao clicar "abrir" num resultado desse grupo,
+vale abrir o grupo manualmente uma vez direto no Telegram antes de tentar
+o link, mas isso e especulacao, nao confirmado.
+
+## "Vip OF" com backfill do historico antigo incompleto no log
+
+Log colado pelo usuario mostrou, pra esse chat, `textoCompletoAte: 158638`
+contra `backfillAlvo: 163202` - ou seja, a Fase 1 (completar texto do
+historico antigo) ainda nao tinha terminado nesse grupo na hora do log.
+Isso e esperado/normal (a Fase 1 avanca aos poucos, salvando checkpoint a
+cada 500 mensagens, e continua de onde parou na proxima vez que o scan
+rodar) - nao e bug, so precisa deixar o scan rodar mais.

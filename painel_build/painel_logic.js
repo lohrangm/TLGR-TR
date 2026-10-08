@@ -66,6 +66,17 @@
         });
     }
 
+    // Busca uma mensagem especifica pela chave (chatId:messageId) - usado
+    // pela tela "Verificar mensagem" pra checar se algo que apareceu na
+    // busca nativa do Telegram esta (ou nao) no nosso banco local.
+    function buscarMensagem(db, key) {
+        return new Promise((resolve, reject) => {
+            const pedido = transacao(db, "mensagens", "readonly").get(key);
+            pedido.onsuccess = () => resolve(pedido.result || null);
+            pedido.onerror = () => reject(pedido.error);
+        });
+    }
+
     function listarChats(db) {
         return new Promise((resolve, reject) => {
             const pedido = transacao(db, "chats", "readonly").getAll();
@@ -675,6 +686,8 @@
             botaoBusca.addEventListener("click", () => telaBusca());
             const botaoBuscaAvancada = botaoAcao(corpo, "Busca avancada (grupos/canais publicos)");
             botaoBuscaAvancada.addEventListener("click", () => telaBuscaAvancada());
+            const botaoVerificar = botaoAcao(corpo, "Verificar mensagem (local vs. ao vivo)");
+            botaoVerificar.addEventListener("click", () => telaVerificarMensagem());
             atualizarVisibilidadeSair(true);
         } catch (erro) {
             textoAviso(corpo, "Erro ao carregar a conta: " + (erro && erro.message ? erro.message : erro), "#ff6b6b");
@@ -704,6 +717,18 @@
         }
         grupos.sort((a, b) => a.titulo.localeCompare(b.titulo));
         return grupos;
+    }
+
+    // Acha o dialog.entity de um chat ja escaneado, pelo chatId guardado -
+    // precisa disso (em vez de so o chatId numerico) pra poder chamar
+    // cliente.getMessages, do mesmo jeito que escanearTudo usa
+    // dialog.entity pra chamar iterMessages. So itera os dialogs ate achar
+    // (nao da pra montar o InputPeer so com o chatId sem o access_hash).
+    async function encontrarEntidadePorChatId(chatId) {
+        for await (const dialog of cliente.iterDialogs({})) {
+            if (String(dialog.id) === chatId) return dialog.entity;
+        }
+        return null;
     }
 
     // Mostra o que ja esta salvo por grupo: quantas mensagens com reacao,
@@ -1492,6 +1517,196 @@
         botaoBuscar.addEventListener("click", () => executarBuscaGlobal(false));
         campoBusca.addEventListener("keydown", (ev) => {
             if (ev.key === "Enter") executarBuscaGlobal(false);
+        });
+    }
+
+    // Confere se uma mensagem especifica (ex.: algo que apareceu na busca
+    // NATIVA do Telegram mas nao na nossa busca local) ja esta salva no
+    // nosso banco, comparando com o que existe ao vivo no Telegram agora.
+    // Existe pra responder com certeza, sem chute, se um caso de "a busca
+    // nativa acha e a nossa nao" e um buraco real no scan (mensagem existe
+    // mas ainda nao foi escaneada) ou outra coisa (texto editado depois,
+    // mensagem apagada, etc.).
+    async function telaVerificarMensagem() {
+        const corpo = corpoDoPainel();
+        botaoVoltar(corpo);
+
+        const aviso = document.createElement("div");
+        aviso.style.cssText = "color:#8b92a3;margin-bottom:10px;";
+        aviso.textContent =
+            'Confere se uma mensagem especifica (por exemplo, algo que voce viu na busca nativa do Telegram mas nao apareceu em "Buscar mensagens" aqui) ja esta no nosso banco local, e compara com o que existe ao vivo no Telegram agora. Serve pra saber se e falta de scan (ainda nao chegou la) ou outra coisa.';
+        corpo.appendChild(aviso);
+
+        const db = await abrirBanco();
+        const chats = await listarChats(db);
+        chats.sort((a, b) => (a.chatTitle || "").localeCompare(b.chatTitle || ""));
+
+        if (!chats.length) {
+            textoAviso(corpo, "Nenhum grupo escaneado ainda. Roda o scan primeiro.", "#ff6b6b");
+            return;
+        }
+
+        const blocoGrupo = document.createElement("div");
+        blocoGrupo.style.marginBottom = "10px";
+        blocoGrupo.innerHTML =
+            '<label style="display:block;color:#8b92a3;margin-bottom:4px;">Grupo/canal</label>' +
+            '<select id="trp-verificar-grupo" style="width:100%;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:8px;box-sizing:border-box;"></select>';
+        corpo.appendChild(blocoGrupo);
+        const selectGrupo = blocoGrupo.querySelector("#trp-verificar-grupo");
+        for (const c of chats) {
+            const opcao = document.createElement("option");
+            opcao.value = c.chatId;
+            opcao.textContent = c.chatTitle || c.chatId;
+            selectGrupo.appendChild(opcao);
+        }
+
+        const campoLink = campoTexto(
+            corpo,
+            'Cola o link da mensagem aqui (opcional, so pra preencher o ID e o grupo sozinho)',
+            "text"
+        );
+        const campoId = campoTexto(
+            corpo,
+            'ID da mensagem (numero no final do link de "Copiar link da mensagem")',
+            "number"
+        );
+
+        // Tenta reconhecer o link (t.me/c/<id>/<msg> ou o link que o proprio
+        // botao "abrir" daqui gera, web.telegram.org/...#<id>?post=<msg>) e
+        // preencher ID + grupo sozinho. Se nao reconhecer o formato, pelo
+        // menos pega o ultimo numero colado como ID da mensagem.
+        campoLink.addEventListener("input", () => {
+            const texto = campoLink.value.trim();
+            if (!texto) return;
+            const selecionarGrupoPorIdBase = (idBase) => {
+                const candidato = chats.find((c) => c.chatId === "-100" + idBase || c.chatId === "-" + idBase);
+                if (candidato) selectGrupo.value = candidato.chatId;
+            };
+            const comC = texto.match(/\/c\/(\d+)\/(\d+)/);
+            if (comC) {
+                campoId.value = comC[2];
+                selecionarGrupoPorIdBase(comC[1]);
+                return;
+            }
+            const comPost = texto.match(/#-?(\d+)\?post=(\d+)/);
+            if (comPost) {
+                campoId.value = comPost[2];
+                selecionarGrupoPorIdBase(comPost[1]);
+                return;
+            }
+            const numeros = texto.match(/\d+/g);
+            if (numeros && numeros.length) campoId.value = numeros[numeros.length - 1];
+        });
+
+        const botaoVerificar = botaoAcao(corpo, "Verificar");
+        const resultado = document.createElement("div");
+        resultado.style.marginTop = "10px";
+        corpo.appendChild(resultado);
+
+        function blocoResultado(titulo, cor, miolo) {
+            return (
+                '<div style="margin-bottom:10px;padding:8px;border:1px solid #2a2f3a;border-radius:6px;">' +
+                '<div style="color:' +
+                cor +
+                ';font-weight:600;margin-bottom:4px;">' +
+                escapeHtml(titulo) +
+                "</div>" +
+                miolo +
+                "</div>"
+            );
+        }
+
+        botaoVerificar.addEventListener("click", async () => {
+            const chatId = selectGrupo.value;
+            const messageId = parseInt(campoId.value, 10);
+            if (!chatId || !messageId) {
+                textoAviso(corpo, "Escolhe o grupo e preenche o ID da mensagem.", "#ff6b6b");
+                return;
+            }
+            botaoVerificar.disabled = true;
+            resultado.innerHTML = '<div style="color:#8b92a3;">Verificando no banco local...</div>';
+            try {
+                const key = chatId + ":" + messageId;
+                const local = await buscarMensagem(db, key);
+
+                const htmlLocal = local
+                    ? blocoResultado(
+                          "No nosso banco local: encontrada",
+                          "#5ec26a",
+                          '<div style="font-size:11px;color:#8b92a3;margin-bottom:2px;">' +
+                              escapeHtml((local.dateUtc || "").slice(0, 10)) +
+                              " - " +
+                              (local.reactionTotal || 0) +
+                              " reacoes</div><div>" +
+                              escapeHtml(local.texto || "") +
+                              "</div>"
+                      )
+                    : blocoResultado(
+                          "No nosso banco local: nao encontrada",
+                          "#ff6b6b",
+                          '<div style="color:#8b92a3;">Essa mensagem ainda nao esta salva (scan nao chegou nela ainda, ou nunca vai chegar por algum motivo).</div>'
+                      );
+
+                resultado.innerHTML = htmlLocal + '<div style="color:#8b92a3;">Buscando ao vivo no Telegram...</div>';
+
+                const entidade = await encontrarEntidadePorChatId(chatId);
+                if (!entidade) {
+                    resultado.innerHTML =
+                        htmlLocal +
+                        blocoResultado(
+                            "Ao vivo no Telegram: erro",
+                            "#ff6b6b",
+                            '<div style="color:#8b92a3;">Nao achei esse grupo entre os dialogs dessa conta agora (saiu do grupo? mudou de id?).</div>'
+                        );
+                    return;
+                }
+
+                const mensagens = await cliente.getMessages(entidade, { ids: [messageId] });
+                const mensagemAoVivo = mensagens && mensagens[0];
+
+                const htmlAoVivo = mensagemAoVivo
+                    ? blocoResultado(
+                          "Ao vivo no Telegram agora: existe",
+                          "#5ec26a",
+                          '<div style="font-size:11px;color:#8b92a3;margin-bottom:2px;">' +
+                              escapeHtml(dataIso(mensagemAoVivo).slice(0, 10)) +
+                              " - " +
+                              extrairReacoes(mensagemAoVivo).total +
+                              " reacoes</div><div>" +
+                              escapeHtml(textoCompleto(mensagemAoVivo)) +
+                              "</div>"
+                      )
+                    : blocoResultado(
+                          "Ao vivo no Telegram agora: nao existe",
+                          "#e0a93a",
+                          '<div style="color:#8b92a3;">Apagada, ou esse ID nao corresponde a nenhuma mensagem nesse grupo.</div>'
+                      );
+
+                resultado.innerHTML = htmlLocal + htmlAoVivo;
+
+                if (!local && mensagemAoVivo) {
+                    resultado.insertAdjacentHTML(
+                        "beforeend",
+                        '<div style="color:#e0a93a;font-size:12px;">Isso confirma um buraco real: a mensagem existe mas o scan ainda nao salvou ela. Se o ultimo scan desse grupo ja passou da data dela e mesmo assim nao achou, e bug de verdade - me avisa com esse caso.</div>'
+                    );
+                } else if (
+                    local &&
+                    mensagemAoVivo &&
+                    normalizarTexto(local.texto || "") !== normalizarTexto(textoCompleto(mensagemAoVivo))
+                ) {
+                    resultado.insertAdjacentHTML(
+                        "beforeend",
+                        '<div style="color:#e0a93a;font-size:12px;">O texto salvo e diferente do texto ao vivo - ou a mensagem foi editada depois do scan, ou o texto nao foi capturado direito na hora.</div>'
+                    );
+                }
+            } catch (erro) {
+                resultado.innerHTML =
+                    '<div style="color:#ff6b6b;">Erro: ' +
+                    escapeHtml(erro && erro.message ? erro.message : String(erro)) +
+                    "</div>";
+            } finally {
+                botaoVerificar.disabled = false;
+            }
         });
     }
 
