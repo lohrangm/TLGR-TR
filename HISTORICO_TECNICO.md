@@ -445,9 +445,33 @@ novo (regerar o `bundle.js`) antes de `node montar_userscript.mjs` - diferente
 das mudancas anteriores, que só mexiam em `painel_logic.js` e não exigiam
 reconstruir o bundle do teleproto.
 
-**Nao testado ainda com a conta real do usuario** - a cota de texto livre
-e o comportamento exato de `PREMIUM_ACCOUNT_REQUIRED` só vão aparecer
-quando ele usar.
+**Testado com a conta real do usuario: bloqueado por falta de Telegram
+Premium.** Primeira tentativa (texto livre) deu
+`PREMIUM_ACCOUNT_REQUIRED (caused by channels.SearchPosts)` direto, sem
+nem chegar a consumir cota. Usuario estranhou - foi olhar a lista de
+recursos Premium do proprio Telegram e nao achou essa busca la, pediu pra
+verificar nas fontes de novo.
+
+Achei a confirmacao no proprio blog oficial do Telegram
+(telegram.org/blog/post-search-story-albums-and-more, anuncio de
+ago/2025, que introduziu essa busca global de posts): "Post search is
+initially available to Telegram Premium users." Ou seja: nao e uma
+confusao nossa nem erro de configuracao - e uma restricao de rollout do
+proprio Telegram, deliberada e documentada por eles (a palavra "initially"
+sugere que pode abrir pra conta free no futuro, sem prazo dito). O
+usuario tinha razao em estranhar: e um recurso tao novo que ainda nao
+aparece listado nas telas de "o que o Premium inclui" do app/site, mas
+esta descrito no blog oficial deles.
+
+Pratico: sem Telegram Premium, a tela de busca avancada nao funciona
+(nem por hashtag, bloqueio e no nivel do metodo inteiro, nao so no modo
+texto livre) - so o aviso na tela foi ajustado pra deixar isso explicito
+em vez da redacao antiga, que sugeria cota gratis disponivel mesmo sem
+Premium. Nenhuma mudanca de codigo alem do texto do aviso: a chamada
+`channels.SearchPosts` em si esta correta, so a conta nao tem permissao
+do lado do servidor do Telegram. Se o usuario um dia assinar Premium, a
+tela ja funciona sem precisar mexer em nada - e so a Telegram liberar do
+lado deles.
 
 **Atualizacao**: ganhou paginacao de verdade (botao "Carregar mais"),
 seguindo a receita de paginacao da propria doc da API: `offsetRate` vira o

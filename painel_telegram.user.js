@@ -170808,7 +170808,7 @@ store2/dist/store2.js:
         const aviso = document.createElement("div");
         aviso.style.cssText = "color:#8b92a3;margin-bottom:10px;";
         aviso.textContent =
-            "Busca GLOBAL do proprio Telegram em canais/supergrupos PUBLICOS que essa conta nao participa (grupo fechado nao e alcancado). Por hashtag nao tem custo conhecido; por texto livre a conta tem uma cota diaria gratis e depois cobra em Telegram Stars.";
+            'Busca GLOBAL do proprio Telegram em canais/supergrupos PUBLICOS que essa conta nao participa (grupo fechado nao e alcancado). Segundo o proprio blog do Telegram (ago/2025), esse recurso "e inicialmente disponivel so pra contas Premium" - sem Premium a busca falha com erro de conta Premium exigida, mesmo por hashtag. Com Premium, ainda tem uma cota diaria gratis e depois cobra em Telegram Stars.';
         corpo.appendChild(aviso);
 
         const statusCota = document.createElement("div");
