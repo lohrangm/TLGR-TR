@@ -217,6 +217,49 @@ foi escrito - vale conferir se o desempenho fica bom em grupos grandes
 (o scan agora grava toda mensagem, nao so as com reacao) e se o backfill
 via "reescanear do zero" funciona como esperado.
 
+## Backlog (pedido pelo usuario, nao implementado ainda)
+
+- **Paginacao em "Ver top reacoes"**: hoje `buscarTop()` e chamado com
+  `limite: 50` fixo (`telaResultados()`), sem jeito de ver o resto. O
+  usuario pediu um botao "mostrar mais" no final da lista que carrega mais
+  resultados sob demanda (nao a lista inteira de uma vez). Prioridade alta
+  - ele foi explicito que esse e o que mais importa.
+- **Mesma paginacao em "Buscar mensagens"**: ele disse que nao tem certeza
+  se vale a pena aqui (menos prioridade que o item acima, mas vale
+  considerar junto ja que `buscarTexto()` tem a mesma limitacao de
+  `limite` fixo).
+- **Mostrar quais reacoes, nao so o total**: hoje `telaResultados()` so
+  exibe `m.reactionTotal` (numero). O registro ja guarda o array
+  `reactions` (`[{emoji, count}]`, separado por emoji), entao da pra
+  exibir sem precisar escanear de novo - e so renderizar esse array. Ultima
+  prioridade da lista, usuario deixou claro que so vale a pena se for
+  facil (e e - os dados ja estao salvos).
+
+## Pesquisa de reclamacoes comuns do Telegram (p/ identificar melhorias)
+
+A pedido do usuario, pesquisei reclamacoes recorrentes de usuarios do
+Telegram (agregadores de reviews de App Store/Google Play, r/Telegram via
+gummysearch, Capterra) pra ver se haveria mais oportunidades pro nosso
+painel. Reclamacoes relevantes pro escopo do projeto:
+
+- **Busca ineficiente** - confirma de novo o que ja motivou a busca por
+  palavra-chave que implementamos.
+- **Silenciar grupo faz perder mensagem importante** / notificacao em
+  excesso em grupo movimentado - essa e a mais promissora pra uma proxima
+  feature: como ja escaneamos e guardamos tudo localmente, da pra fazer um
+  "resumo do que rolou" (ex: mensagens com mais reacao, ou so as novas,
+  desde a ultima vez que o usuario abriu aquele chat/o painel) - uma forma
+  de acompanhar grupo silenciado sem perder o que importa. Ainda nao
+  conversei isso com o usuario, so anotando a ideia.
+- **Organizar muitos grupos/canais e dificil, pastas insuficientes** -
+  relacionado de leve ao nosso seletor de grupo, mas nao parece um gap que
+  valha a pena perseguir agora.
+- Reclamacoes fora do escopo do projeto (nao da pra resolver com um
+  userscript local): spam/contas falsas, chamada de video, demora pra
+  enviar mensagem, bloqueio de conta sem aviso, falta de criptografia
+  ponta-a-ponta por padrao, ausencia de ferramentas de gestao de
+  tarefas/prazos (isso seria outro produto, nao uma feature desse).
+
 Se aparecer um proximo problema relatado pelo usuario, documentar aqui
 depois de resolvido: o que quebrou, por que, e a correcao - nesse mesmo
 formato das secoes acima.
