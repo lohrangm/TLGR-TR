@@ -6,7 +6,7 @@
     // do proprio navegador, na mesma sessao do Telegram Web - sem servidor
     // local, sem Python, sem conexao externa de IP pra manter aberta.
 
-    const { TelegramClient, StringSession, PromisedWebSockets } = window.TeleprotoBridge;
+    const { TelegramClient, StringSession, PromisedWebSockets, Api } = window.TeleprotoBridge;
 
     const CHAVE_API_ID = "trp_api_id";
     const CHAVE_API_HASH = "trp_api_hash";
@@ -609,6 +609,8 @@
             botaoResultados.addEventListener("click", () => telaResultados());
             const botaoBusca = botaoAcao(corpo, "Buscar mensagens");
             botaoBusca.addEventListener("click", () => telaBusca());
+            const botaoBuscaAvancada = botaoAcao(corpo, "Busca avancada (grupos/canais publicos)");
+            botaoBuscaAvancada.addEventListener("click", () => telaBuscaAvancada());
             atualizarVisibilidadeSair(true);
         } catch (erro) {
             textoAviso(corpo, "Erro ao carregar a conta: " + (erro && erro.message ? erro.message : erro), "#ff6b6b");
@@ -1158,6 +1160,143 @@
         botaoBuscar.addEventListener("click", executarBusca);
         campoBusca.addEventListener("keydown", (ev) => {
             if (ev.key === "Enter") executarBusca();
+        });
+    }
+
+    // ---- Tela de busca avancada: pesquisa global do Telegram (canais/grupos publicos que a conta nao participa) ----
+
+    // Usa channels.SearchPosts, metodo oficial do Telegram pra busca global de
+    // conteudo em canais/supergrupos publicos (inclusive os que a conta nao
+    // participa) - so alcanca grupo/canal publico (com @usuario), nunca grupo
+    // fechado. Dois modos, mutuamente exclusivos (a API exige exatamente um):
+    // hashtag (sem custo documentado) ou texto livre (cada conta tem uma cota
+    // diaria gratis, documentada via channels.CheckSearchPostsFlood; depois
+    // da cota, cada busca cobra em Telegram Stars). Independente do scan local
+    // - e so mais uma chamada na mesma conexao, da pra abrir essa tela com o
+    // scan rodando em segundo plano sem nenhum problema.
+    async function telaBuscaAvancada() {
+        const corpo = corpoDoPainel();
+        botaoVoltar(corpo);
+
+        const aviso = document.createElement("div");
+        aviso.style.cssText = "color:#8b92a3;margin-bottom:10px;";
+        aviso.textContent =
+            "Busca GLOBAL do proprio Telegram em canais/supergrupos PUBLICOS que essa conta nao participa (grupo fechado nao e alcancado). Por hashtag nao tem custo conhecido; por texto livre a conta tem uma cota diaria gratis e depois cobra em Telegram Stars.";
+        corpo.appendChild(aviso);
+
+        const statusCota = document.createElement("div");
+        statusCota.style.cssText = "color:#8b92a3;margin-bottom:10px;font-size:11px;";
+        statusCota.textContent = "Verificando cota de busca por texto livre...";
+        corpo.appendChild(statusCota);
+
+        cliente
+            .invoke(new Api.channels.CheckSearchPostsFlood({}))
+            .then((cota) => {
+                if (cota.queryIsFree) {
+                    statusCota.textContent = "Busca por texto livre: sem custo agora.";
+                    return;
+                }
+                statusCota.textContent =
+                    `Busca por texto livre: ${cota.remains ?? "?"} de ${cota.totalDaily ?? "?"} gratis restantes hoje` +
+                    (cota.remains > 0 ? "." : ` - a proxima custa ${cota.starsAmount ?? "?"} Stars.`);
+            })
+            .catch((erro) => {
+                statusCota.textContent =
+                    "Nao consegui checar a cota de texto livre: " + (erro && erro.message ? erro.message : erro);
+            });
+
+        const blocoModo = document.createElement("div");
+        blocoModo.style.cssText = "display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;font-size:12px;";
+        const checkboxHashtag = criarQuadradoMarcavel(false, null);
+        const labelModo = document.createElement("span");
+        labelModo.textContent = "Buscar por hashtag (sem #) em vez de texto livre";
+        blocoModo.appendChild(checkboxHashtag.elemento);
+        blocoModo.appendChild(labelModo);
+        corpo.appendChild(blocoModo);
+
+        const campoBusca = campoTexto(corpo, "Palavra-chave (texto livre) ou hashtag", "text");
+        const botaoBuscar = botaoAcao(corpo, "Buscar globalmente");
+
+        const lista = document.createElement("div");
+        corpo.appendChild(lista);
+
+        async function executarBuscaGlobal() {
+            const termo = campoBusca.value.trim();
+            if (!termo) {
+                lista.innerHTML = '<div style="color:#8b92a3;">Digita algo pra buscar.</div>';
+                return;
+            }
+            lista.innerHTML = '<div style="color:#8b92a3;">Buscando nos canais/grupos publicos do Telegram...</div>';
+            botaoBuscar.disabled = true;
+            try {
+                const parametros = {
+                    offsetRate: 0,
+                    offsetPeer: new Api.InputPeerEmpty({}),
+                    offsetId: 0,
+                    limit: 20,
+                };
+                if (checkboxHashtag.checked) {
+                    parametros.hashtag = termo.replace(/^#/, "");
+                } else {
+                    parametros.query = termo;
+                }
+                const resultado = await cliente.invoke(new Api.channels.SearchPosts(parametros));
+                const mensagens = resultado.messages || [];
+                const chatsPorId = new Map();
+                for (const c of resultado.chats || []) chatsPorId.set(String(c.id), c);
+
+                if (!mensagens.length) {
+                    lista.innerHTML = '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>';
+                    return;
+                }
+                lista.innerHTML = resultado.inexact
+                    ? '<div style="color:#8b92a3;font-size:11px;margin-bottom:6px;">Resultado aproximado (o Telegram marcou essa busca como "inexact").</div>'
+                    : "";
+                for (const m of mensagens) {
+                    const chatId = m.peerId && m.peerId.channelId != null ? String(m.peerId.channelId) : null;
+                    const chat = chatId ? chatsPorId.get(chatId) : null;
+                    const titulo = (chat && chat.title) || "Canal/grupo desconhecido";
+                    const username = chat && chat.username ? "@" + chat.username : null;
+                    const tipo = chat && chat.megagroup ? "grupo" : "canal";
+
+                    const item = document.createElement("div");
+                    item.style.cssText = "padding:8px 0;border-bottom:1px solid #2a2f3a;";
+                    item.innerHTML =
+                        '<div style="color:#4da3ff;font-weight:600;">' +
+                        escapeHtml(titulo) +
+                        " (" +
+                        tipo +
+                        ")</div>" +
+                        (username
+                            ? '<div style="color:#8b92a3;font-size:11px;">' + escapeHtml(username) + "</div>"
+                            : "") +
+                        "<div>" +
+                        escapeHtml(truncar((m.message || "").trim(), 200)) +
+                        "</div>";
+                    if (username) {
+                        const abrir = document.createElement("div");
+                        abrir.style.cssText = "color:#4da3ff;font-size:11px;cursor:pointer;margin-top:4px;";
+                        abrir.textContent = "abrir " + username;
+                        abrir.addEventListener("click", () => {
+                            window.open("https://t.me/" + chat.username, "_blank");
+                        });
+                        item.appendChild(abrir);
+                    }
+                    lista.appendChild(item);
+                }
+            } catch (erro) {
+                lista.innerHTML =
+                    '<div style="color:#ff6b6b;">Erro: ' +
+                    escapeHtml(erro && erro.message ? erro.message : String(erro)) +
+                    "</div>";
+            } finally {
+                botaoBuscar.disabled = false;
+            }
+        }
+
+        botaoBuscar.addEventListener("click", executarBuscaGlobal);
+        campoBusca.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter") executarBuscaGlobal();
         });
     }
 

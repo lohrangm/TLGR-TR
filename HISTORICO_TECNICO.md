@@ -380,3 +380,71 @@ painel. Reclamacoes relevantes pro escopo do projeto:
 Se aparecer um proximo problema relatado pelo usuario, documentar aqui
 depois de resolvido: o que quebrou, por que, e a correcao - nesse mesmo
 formato das secoes acima.
+
+## Busca avancada - pesquisa GLOBAL em canais/grupos publicos (implementado)
+
+Usuario pediu uma busca separada da local (`buscarTexto()`, que so enxerga
+o que ja foi escaneado): pesquisar por palavra-chave em canais/grupos
+PUBLICOS que a conta nao participa, pra descobrir onde uma palavra aparece
+sem precisar entrar no grupo primeiro. Ele mesmo reconheceu que grupo
+fechado e praticamente impossivel - escopo certo, so grupo/canal aberto.
+
+Pesquisei a API oficial do Telegram (core.telegram.org/api/search e
+core.telegram.org/method/channels.searchPosts) antes de implementar.
+Achados:
+
+- Existe sim um metodo pra isso: `channels.searchPosts`, que faz busca
+  "globalmente em todos os canais publicos" (inclusive os que a conta nao
+  participa). Dois modos, exatamente um deles por chamada: `hashtag` (busca
+  por hashtag, sem custo documentado) ou `query` (texto livre, busca full-
+  text de verdade - esse e o que o usuario quer).
+- **"Canal" aqui inclui supergrupo** - no namespace MTProto, tanto canal
+  de transmissao quanto super grupo sao a mesma entidade `Channel`
+  (diferenciados pelo campo `megagroup`). Como grupo basico do Telegram
+  NUNCA pode ter @usuario publico (so supergrupo/canal pode), todo "grupo
+  aberto" que o usuario quer achar ja e um supergrupo por definicao - entao
+  o metodo cobre exatamente o caso dele, mesmo o nome sendo "channels".
+- **Busca por texto livre nao e de graca ilimitada**: cada conta tem uma
+  cota diaria gratis (campos `totalDaily`/`remains`, descobertos via
+  `channels.checkSearchPostsFlood`), e depois dela cada busca cobra em
+  Telegram Stars (`starsAmount`). A doc tambem lista `PREMIUM_ACCOUNT_REQUIRED`
+  como erro possivel, mas nao deixa claro se e sempre assim ou so em algum
+  caso especifico - **nao sei** se a conta do usuario vai conseguir usar
+  sem Premium/sem pagar, por isso a tela mostra a cota real da conta dele
+  antes de ele gastar uma busca, em vez de eu prometer que e de graca.
+  Busca por hashtag nao tem esse aviso de custo na documentacao.
+- `messages.searchGlobal` (o outro metodo candidato) NAO serve pra isso -
+  ele busca dentro dos chats que a propria conta ja participa, nao em
+  canal/grupo externo.
+
+Implementacao (`telaBuscaAvancada()`, acessivel pelo botao "Busca avancada
+(grupos/canais publicos)" em `telaLogado()`): mostra a cota atual de busca
+por texto livre assim que abre a tela (`channels.CheckSearchPostsFlood`),
+tem uma checkbox pra alternar entre hashtag e texto livre (reaproveitando
+`criarQuadradoMarcavel()`), e um campo + botao que chama
+`channels.SearchPosts({ hashtag ou query, offsetRate: 0, offsetPeer:
+InputPeerEmpty, offsetId: 0, limit: 20 })`. O resultado traz `messages` +
+`chats` juntos (sem precisar resolver entidade por fora) - cada mensagem
+tem `peerId.channelId` que casa com o `id` de um dos chats retornados; a
+partir dai da pra mostrar titulo, @usuario, se e canal ou supergrupo
+(`chat.megagroup`), o trecho da mensagem, e um link `t.me/<usuario>` pra
+abrir.
+
+**Nao precisou de nenhuma mudanca pra rodar junto com o scan** - e so mais
+uma chamada RPC na mesma conexao MTProto (`cliente.invoke(...)`), sem
+nenhum estado compartilhado com `escanearTudo()`. Da pra abrir essa tela
+com o scan rodando em segundo plano sem problema.
+
+**Mudanca de infraestrutura**: essa foi a primeira vez que o painel
+precisou chamar a API crua do Telegram por fora dos metodos de
+conveniencia do teleproto (`iterDialogs`, `iterMessages`, etc.), entao o
+bridge (`entry.js`) passou a exportar tambem `Api` (de
+`teleproto/tl/api.js`), alem de `TelegramClient`/`StringSession`/
+`PromisedWebSockets` que ja exportava. Precisou rodar `node build.mjs` de
+novo (regerar o `bundle.js`) antes de `node montar_userscript.mjs` - diferente
+das mudancas anteriores, que só mexiam em `painel_logic.js` e não exigiam
+reconstruir o bundle do teleproto.
+
+**Nao testado ainda com a conta real do usuario** - a cota de texto livre
+e o comportamento exato de `PREMIUM_ACCOUNT_REQUIRED` só vão aparecer
+quando ele usar.
