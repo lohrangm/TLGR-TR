@@ -448,3 +448,72 @@ reconstruir o bundle do teleproto.
 **Nao testado ainda com a conta real do usuario** - a cota de texto livre
 e o comportamento exato de `PREMIUM_ACCOUNT_REQUIRED` só vão aparecer
 quando ele usar.
+
+**Atualizacao**: ganhou paginacao de verdade (botao "Carregar mais"),
+seguindo a receita de paginacao da propria doc da API: `offsetRate` vira o
+`nextRate` da resposta anterior (ou a data da ultima mensagem, se
+`nextRate` nao vier), e `offsetPeer`/`offsetId` viram o peer+id da ultima
+mensagem recebida (o peer e montado como `InputPeerChannel` usando
+`accessHash` do chat, que a propria resposta ja devolve na lista `chats` -
+nao precisa resolver entidade por fora). Segundo a doc, chamada de pagina
+seguinte de uma busca ja iniciada nao conta na cota diaria gratis - so o
+primeiro pedido de cada busca nova consome.
+
+## "Buscar mensagens" preso no primeiro grupo quando a palavra e comum (corrigido)
+
+Usuario reportou: buscando uma palavra comum com "Todos os grupos"
+selecionado, so aparecia resultado de um grupo; selecionando aquele outro
+grupo especifico manualmente, os resultados dele apareciam. Causa:
+exatamente a mesma classe de bug do "top reacoes" (`limite` fixo + ordem de
+iteracao por chat), so que em `buscarTexto()` em vez de `buscarTop()`.
+
+Sem `chatId`, o cursor de `buscarTexto()` percorre a loja `mensagens` pela
+chave primaria (`chatId:messageId`), que ordena por ordem lexicografica de
+string - ou seja, visita TODAS as mensagens de um grupo antes de passar
+pro proximo (o "A" de um chatId vem antes do "Z" de outro, por exemplo). A
+busca parava assim que `resultados.length >= limite` (100, fixo) - se o
+primeiro grupo sozinho ja tivesse 100+ mensagens batendo com o termo, o
+cursor nunca chegava nos outros grupos. Reproduzido e confirmado em
+`test_indexeddb_logic.mjs` (grupo "A" com 5 mensagens batendo, grupo "Z"
+com 1: `limite: 3` fica preso no A, `limite: 10` alcanca o Z).
+
+Corrigido com o mesmo padrao ja usado em `telaResultados()`: "Mostrar
+mais" no fim da lista, que aumenta o `limite` e busca de novo (deixa o
+cursor andar o suficiente pra sair do primeiro grupo). Resetado pra 100
+toda vez que o termo, grupo, ordenacao ou minimo de reacoes muda.
+
+## "Buscar mensagens" - filtros, ordenacao e agrupamento (evolucao pedida pelo usuario)
+
+Junto com o fix acima, o usuario pediu uma geral na tela de busca: filtro
+de minimo de reacoes (`buscarTexto()` ganhou o parametro `minimo`, mesmo
+padrao de `buscarTop()`), ordenacao por mais recente ou mais reacoes
+(parametro `ordenarPor: "data" | "reacoes"`), e, quando a busca e em
+"Todos os grupos" e o resultado tem mais de um grupo, um agrupamento
+visual com cabecalho clicavel por grupo (maximizar/minimizar, seta ▾/▸)
+em vez de uma lista unica misturada.
+
+`agruparPorChat(mensagens)` faz esse agrupamento preservando a ordem de
+PRIMEIRA aparicao de cada chat na lista ja ordenada - ou seja, o grupo que
+contém o resultado mais relevante (primeiro pela ordenacao escolhida)
+aparece primeiro, e a ordem interna de cada grupo respeita a mesma
+ordenacao geral. So ativa esse modo quando `chatId` do filtro esta vazio
+E os resultados realmente tem mais de um chat distinto - selecionando um
+grupo especifico continua mostrando lista simples, sem cabecalhos.
+
+## Botao flutuante "voltar ao topo" (pedido geral de navegacao)
+
+Usuario reportou ter que rolar manualmente ate o topo do painel depois de
+descer numa lista longa de resultado. Pediu uma das duas opcoes: botao
+flutuante de voltar ao topo, OU cabecalho fixo com só a lista rolando.
+Optei pela primeira - e mais simples de implementar sobre a estrutura
+atual (o painel inteiro e um unico bloco com `overflow: auto`, cabecalho e
+corpo juntos; fixar só o cabecalho exigiria separar isso em dois
+containers de rolagem) e resolve o problema de forma mais direta (volta
+pro topo de QUALQUER tela, nao so deixa o cabecalho visivel).
+
+`adicionarBotaoTopo()` cria um botao circular "↑" com `position: fixed`,
+filho direto do `painel` (nao de `#trp-corpo`) - por isso sobrevive a troca
+de tela (que só limpa o `#trp-corpo`) e some sozinho quando o painel fecha
+(`painel.remove()` leva os filhos junto). Chamado uma vez em
+`montarPainel()`, ao lado de `renderizarCabecalho()`. Clique faz
+`painel.scrollTop = 0`.

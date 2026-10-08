@@ -151,9 +151,19 @@
     // mensagens ja escaneadas - existe porque a busca nativa do Telegram e
     // por palavra inteira, as vezes nao acha mensagem que claramente existe
     // (ver HISTORICO_TECNICO.md). So enxerga o que ja foi salvo localmente.
-    function buscarTexto(db, { termo, chatId, limite }) {
+    //
+    // Sem chatId, o cursor percorre a loja inteira pela chave primaria (que
+    // comeca com o chatId), entao visita TODAS as mensagens de um grupo antes
+    // de passar pro proximo. Se esse primeiro grupo sozinho ja tiver
+    // "limite" ou mais mensagens batendo com o termo, a busca para ali e
+    // nunca chega nos outros grupos - e exatamente por isso que existe
+    // paginacao (chamar nessa funcao de novo com "limite" maior) em vez de
+    // so aumentar um limite fixo de uma vez: ela deixa o cursor avançar o
+    // suficiente pra sair do primeiro grupo e alcançar os demais.
+    function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor }) {
         return new Promise((resolve, reject) => {
             const termoNormalizado = normalizarTexto(termo);
+            const minimoReacoes = minimo || 0;
             const resultados = [];
             let visitados = 0;
             const LIMITE_VISITAS = 300000; // trava de seguranca, evita travar o navegador
@@ -164,20 +174,42 @@
             pedido.onsuccess = () => {
                 const cursor = pedido.result;
                 if (!cursor || resultados.length >= limite || visitados >= LIMITE_VISITAS) {
-                    resultados.sort((a, b) => (a.dateUtc < b.dateUtc ? 1 : -1));
+                    if (ordenarPor === "reacoes") {
+                        resultados.sort((a, b) => (b.reactionTotal || 0) - (a.reactionTotal || 0));
+                    } else {
+                        resultados.sort((a, b) => (a.dateUtc < b.dateUtc ? 1 : -1));
+                    }
                     resolve(resultados.slice(0, limite));
                     return;
                 }
                 visitados++;
                 const valor = cursor.value;
                 const texto = valor.texto || valor.textPreview || "";
-                if (normalizarTexto(texto).includes(termoNormalizado)) {
+                if ((valor.reactionTotal || 0) >= minimoReacoes && normalizarTexto(texto).includes(termoNormalizado)) {
                     resultados.push(valor);
                 }
                 cursor.continue();
             };
             pedido.onerror = () => reject(pedido.error);
         });
+    }
+
+    // Agrupa uma lista de mensagens por chat, preservando a ordem de
+    // primeira aparicao de cada chat (ou seja, se a lista ja vier ordenada
+    // por reacoes ou data, o grupo com o resultado mais relevante aparece
+    // primeiro). Usado pra renderizar resultados de busca agrupados por
+    // grupo/canal quando a busca e feita em "Todos".
+    function agruparPorChat(mensagens) {
+        const ordemChats = [];
+        const porChat = new Map();
+        for (const m of mensagens) {
+            if (!porChat.has(m.chatId)) {
+                porChat.set(m.chatId, { chatId: m.chatId, chatTitle: m.chatTitle, itens: [] });
+                ordemChats.push(m.chatId);
+            }
+            porChat.get(m.chatId).itens.push(m);
+        }
+        return ordemChats.map((chatId) => porChat.get(chatId));
     }
 
     // ---- Extracao de dados da mensagem/dialogo, espelhando o scan.py ----
@@ -296,7 +328,39 @@
         });
         document.body.appendChild(painel);
         renderizarCabecalho();
+        adicionarBotaoTopo();
         decidirTela();
+    }
+
+    // Botao flutuante fixo na tela (nao rola junto com o conteudo do
+    // painel) pra voltar ao topo sem precisar arrastar o mouse rolando -
+    // util em listas longas de resultado. Filho do painel (nao de #trp-
+    // corpo), entao sobrevive a troca de tela e some sozinho quando o
+    // painel fecha (painel.remove() leva os filhos junto).
+    function adicionarBotaoTopo() {
+        const botao = document.createElement("button");
+        botao.textContent = "↑";
+        botao.title = "Voltar ao topo";
+        Object.assign(botao.style, {
+            position: "fixed",
+            right: "34px",
+            bottom: "24px",
+            zIndex: 1000000,
+            width: "32px",
+            height: "32px",
+            borderRadius: "50%",
+            border: "none",
+            background: "#4da3ff",
+            color: "#fff",
+            fontSize: "16px",
+            fontWeight: "700",
+            cursor: "pointer",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.35)",
+        });
+        botao.addEventListener("click", () => {
+            painel.scrollTop = 0;
+        });
+        painel.appendChild(botao);
     }
 
     function renderizarCabecalho() {
@@ -1087,13 +1151,20 @@
         corpo.appendChild(aviso);
 
         const filtros = document.createElement("div");
-        filtros.style.cssText = "margin-bottom:10px;";
+        filtros.style.cssText = "display:flex;gap:8px;margin-bottom:10px;";
         filtros.innerHTML =
-            '<select id="trp-busca-grupo" style="width:100%;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;box-sizing:border-box;">' +
+            '<select id="trp-busca-grupo" style="flex:2;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
             '<option value="">Todos os grupos</option>' +
-            "</select>";
+            "</select>" +
+            '<select id="trp-busca-ordenar" style="flex:1;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">' +
+            '<option value="data">Mais recentes</option>' +
+            '<option value="reacoes">Mais reacoes</option>' +
+            "</select>" +
+            '<input id="trp-busca-minimo" type="number" min="0" value="0" title="Minimo de reacoes" style="width:56px;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:6px;">';
         corpo.appendChild(filtros);
         const selectGrupo = filtros.querySelector("#trp-busca-grupo");
+        const selectOrdenar = filtros.querySelector("#trp-busca-ordenar");
+        const inputMinimo = filtros.querySelector("#trp-busca-minimo");
         for (const c of chats) {
             const opcao = document.createElement("option");
             opcao.value = c.chatId;
@@ -1107,6 +1178,64 @@
         const lista = document.createElement("div");
         corpo.appendChild(lista);
 
+        // Cresce com "Mostrar mais" - comeca em 100. Com "Todos os grupos" e
+        // uma palavra comum, o primeiro grupo (na ordem da chave primaria)
+        // pode sozinho preencher esse limite e esconder os outros grupos -
+        // "Mostrar mais" e o jeito de passar por ele e alcancar os demais
+        // (ver nota em cima de buscarTexto()).
+        let limiteAtual = 100;
+
+        function criarItemResultado(m) {
+            const texto = m.texto || m.textPreview || "";
+            const item = document.createElement("div");
+            item.style.cssText =
+                "padding:8px 0;border-bottom:1px solid #2a2f3a;display:flex;gap:8px;align-items:flex-start;" +
+                (m.visto ? "opacity:0.55;" : "");
+
+            const quadrado = criarQuadradoMarcavel(m.visto, (novoValor) => {
+                marcarVisto(db, m.key, novoValor);
+                item.style.opacity = novoValor ? "0.55" : "1";
+            });
+            item.appendChild(quadrado.elemento);
+
+            const conteudo = document.createElement("div");
+            conteudo.style.cssText = "flex:1;min-width:0;";
+            conteudo.innerHTML =
+                '<div style="color:#4da3ff;font-weight:600;cursor:pointer;" class="trp-abrir">' +
+                escapeHtml(m.dateUtc.slice(0, 10)) +
+                (m.reactionTotal ? " - " + m.reactionTotal + " reacoes" : "") +
+                "</div>" +
+                '<div style="color:#8b92a3;font-size:11px;">' +
+                escapeHtml(m.chatTitle) +
+                "</div>" +
+                "<div>" +
+                escapeHtml(truncar(texto, 200)) +
+                "</div>";
+            conteudo.querySelector(".trp-abrir").addEventListener("click", () => {
+                const url = "https://web.telegram.org/k/#" + idBaseDoChatId(m.chatId) + "?post=" + m.messageId;
+                console.log("[Top Reacoes] abrindo:", url);
+                window.open(url, "_blank");
+            });
+            item.appendChild(conteudo);
+            return item;
+        }
+
+        // Cabecalho clicavel de grupo (maximizar/minimizar) usado quando a
+        // busca e em "Todos" e o resultado tem mais de um grupo.
+        function criarCabecalhoGrupo(chatTitle, quantidade) {
+            const cabecalho = document.createElement("div");
+            cabecalho.style.cssText =
+                "display:flex;align-items:center;gap:6px;padding:6px 0;cursor:pointer;user-select:none;" +
+                "color:#8b92a3;font-weight:600;font-size:12px;border-top:1px solid #2a2f3a;margin-top:4px;";
+            const seta = document.createElement("span");
+            seta.textContent = "▾";
+            const texto = document.createElement("span");
+            texto.textContent = chatTitle + " (" + quantidade + ")";
+            cabecalho.appendChild(seta);
+            cabecalho.appendChild(texto);
+            return { cabecalho, seta };
+        }
+
         async function executarBusca() {
             const termo = campoBusca.value.trim();
             if (!termo) {
@@ -1115,51 +1244,63 @@
             }
             lista.innerHTML = '<div style="color:#8b92a3;">Buscando...</div>';
             const chatId = selectGrupo.value || null;
-            const mensagens = await buscarTexto(db, { termo, chatId, limite: 100 });
+            const minimo = parseInt(inputMinimo.value, 10) || 0;
+            const ordenarPor = selectOrdenar.value;
+            const mensagens = await buscarTexto(db, { termo, chatId, minimo, limite: limiteAtual, ordenarPor });
             if (!mensagens.length) {
                 lista.innerHTML = '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>';
                 return;
             }
             lista.innerHTML = "";
-            for (const m of mensagens) {
-                const texto = m.texto || m.textPreview || "";
-                const item = document.createElement("div");
-                item.style.cssText =
-                    "padding:8px 0;border-bottom:1px solid #2a2f3a;display:flex;gap:8px;align-items:flex-start;" +
-                    (m.visto ? "opacity:0.55;" : "");
 
-                const quadrado = criarQuadradoMarcavel(m.visto, (novoValor) => {
-                    marcarVisto(db, m.key, novoValor);
-                    item.style.opacity = novoValor ? "0.55" : "1";
-                });
-                item.appendChild(quadrado.elemento);
+            const maisDeUmGrupo = !chatId && mensagens.some((m) => m.chatId !== mensagens[0].chatId);
+            if (maisDeUmGrupo) {
+                for (const grupo of agruparPorChat(mensagens)) {
+                    const { cabecalho, seta } = criarCabecalhoGrupo(grupo.chatTitle, grupo.itens.length);
+                    const containerItens = document.createElement("div");
+                    cabecalho.addEventListener("click", () => {
+                        const estaAberto = containerItens.style.display !== "none";
+                        containerItens.style.display = estaAberto ? "none" : "block";
+                        seta.textContent = estaAberto ? "▸" : "▾";
+                    });
+                    lista.appendChild(cabecalho);
+                    lista.appendChild(containerItens);
+                    for (const m of grupo.itens) containerItens.appendChild(criarItemResultado(m));
+                }
+            } else {
+                for (const m of mensagens) lista.appendChild(criarItemResultado(m));
+            }
 
-                const conteudo = document.createElement("div");
-                conteudo.style.cssText = "flex:1;min-width:0;";
-                conteudo.innerHTML =
-                    '<div style="color:#4da3ff;font-weight:600;cursor:pointer;" class="trp-abrir">' +
-                    escapeHtml(m.dateUtc.slice(0, 10)) +
-                    (m.reactionTotal ? " - " + m.reactionTotal + " reacoes" : "") +
-                    "</div>" +
-                    '<div style="color:#8b92a3;font-size:11px;">' +
-                    escapeHtml(m.chatTitle) +
-                    "</div>" +
-                    "<div>" +
-                    escapeHtml(truncar(texto, 200)) +
-                    "</div>";
-                conteudo.querySelector(".trp-abrir").addEventListener("click", () => {
-                    const url = "https://web.telegram.org/k/#" + idBaseDoChatId(m.chatId) + "?post=" + m.messageId;
-                    console.log("[Top Reacoes] abrindo:", url);
-                    window.open(url, "_blank");
+            if (mensagens.length >= limiteAtual) {
+                const botaoMais = botaoAcao(lista, "Mostrar mais");
+                botaoMais.addEventListener("click", () => {
+                    limiteAtual += 100;
+                    executarBusca();
                 });
-                item.appendChild(conteudo);
-                lista.appendChild(item);
             }
         }
 
-        botaoBuscar.addEventListener("click", executarBusca);
+        botaoBuscar.addEventListener("click", () => {
+            limiteAtual = 100;
+            executarBusca();
+        });
         campoBusca.addEventListener("keydown", (ev) => {
-            if (ev.key === "Enter") executarBusca();
+            if (ev.key === "Enter") {
+                limiteAtual = 100;
+                executarBusca();
+            }
+        });
+        selectGrupo.addEventListener("change", () => {
+            limiteAtual = 100;
+            if (campoBusca.value.trim()) executarBusca();
+        });
+        selectOrdenar.addEventListener("change", () => {
+            limiteAtual = 100;
+            if (campoBusca.value.trim()) executarBusca();
+        });
+        inputMinimo.addEventListener("change", () => {
+            limiteAtual = 100;
+            if (campoBusca.value.trim()) executarBusca();
         });
     }
 
@@ -1220,19 +1361,63 @@
         const lista = document.createElement("div");
         corpo.appendChild(lista);
 
-        async function executarBuscaGlobal() {
+        // Pagina do jeito que a doc da API manda: offsetRate = nextRate da
+        // pagina anterior (ou a data da ultima mensagem, se nextRate nao
+        // vier); offsetPeer/offsetId = peer+id da ultima mensagem recebida.
+        // null quando a busca ainda nao rodou ou quando a ultima pagina nao
+        // trouxe como continuar. Segundo a doc da API, pedido de pagina
+        // seguinte (com continuar=true) nao conta na cota diaria gratis de
+        // busca por texto livre - so o primeiro pedido de cada busca nova
+        // consome cota.
+        let proximaPagina = null;
+
+        function criarItemResultadoGlobal(m, chatsPorId) {
+            const chatId = m.peerId && m.peerId.channelId != null ? String(m.peerId.channelId) : null;
+            const chat = chatId ? chatsPorId.get(chatId) : null;
+            const titulo = (chat && chat.title) || "Canal/grupo desconhecido";
+            const username = chat && chat.username ? "@" + chat.username : null;
+            const tipo = chat && chat.megagroup ? "grupo" : "canal";
+
+            const item = document.createElement("div");
+            item.style.cssText = "padding:8px 0;border-bottom:1px solid #2a2f3a;";
+            item.innerHTML =
+                '<div style="color:#4da3ff;font-weight:600;">' +
+                escapeHtml(titulo) +
+                " (" +
+                tipo +
+                ")</div>" +
+                (username ? '<div style="color:#8b92a3;font-size:11px;">' + escapeHtml(username) + "</div>" : "") +
+                "<div>" +
+                escapeHtml(truncar((m.message || "").trim(), 200)) +
+                "</div>";
+            if (username) {
+                const abrir = document.createElement("div");
+                abrir.style.cssText = "color:#4da3ff;font-size:11px;cursor:pointer;margin-top:4px;";
+                abrir.textContent = "abrir " + username;
+                abrir.addEventListener("click", () => {
+                    window.open("https://t.me/" + chat.username, "_blank");
+                });
+                item.appendChild(abrir);
+            }
+            return item;
+        }
+
+        async function executarBuscaGlobal(continuar) {
             const termo = campoBusca.value.trim();
             if (!termo) {
                 lista.innerHTML = '<div style="color:#8b92a3;">Digita algo pra buscar.</div>';
                 return;
             }
-            lista.innerHTML = '<div style="color:#8b92a3;">Buscando nos canais/grupos publicos do Telegram...</div>';
+            if (!continuar) {
+                lista.innerHTML = '<div style="color:#8b92a3;">Buscando nos canais/grupos publicos do Telegram...</div>';
+                proximaPagina = { offsetRate: 0, offsetPeer: new Api.InputPeerEmpty({}), offsetId: 0 };
+            }
             botaoBuscar.disabled = true;
             try {
                 const parametros = {
-                    offsetRate: 0,
-                    offsetPeer: new Api.InputPeerEmpty({}),
-                    offsetId: 0,
+                    offsetRate: proximaPagina.offsetRate,
+                    offsetPeer: proximaPagina.offsetPeer,
+                    offsetId: proximaPagina.offsetId,
                     limit: 20,
                 };
                 if (checkboxHashtag.checked) {
@@ -1245,58 +1430,68 @@
                 const chatsPorId = new Map();
                 for (const c of resultado.chats || []) chatsPorId.set(String(c.id), c);
 
+                if (!continuar) lista.innerHTML = "";
+                const botaoAntigo = lista.querySelector(".trp-carregar-mais");
+                if (botaoAntigo) botaoAntigo.remove();
+
                 if (!mensagens.length) {
-                    lista.innerHTML = '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>';
+                    if (!continuar) lista.innerHTML = '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>';
+                    proximaPagina = null;
                     return;
                 }
-                lista.innerHTML = resultado.inexact
-                    ? '<div style="color:#8b92a3;font-size:11px;margin-bottom:6px;">Resultado aproximado (o Telegram marcou essa busca como "inexact").</div>'
-                    : "";
-                for (const m of mensagens) {
-                    const chatId = m.peerId && m.peerId.channelId != null ? String(m.peerId.channelId) : null;
-                    const chat = chatId ? chatsPorId.get(chatId) : null;
-                    const titulo = (chat && chat.title) || "Canal/grupo desconhecido";
-                    const username = chat && chat.username ? "@" + chat.username : null;
-                    const tipo = chat && chat.megagroup ? "grupo" : "canal";
 
-                    const item = document.createElement("div");
-                    item.style.cssText = "padding:8px 0;border-bottom:1px solid #2a2f3a;";
-                    item.innerHTML =
-                        '<div style="color:#4da3ff;font-weight:600;">' +
-                        escapeHtml(titulo) +
-                        " (" +
-                        tipo +
-                        ")</div>" +
-                        (username
-                            ? '<div style="color:#8b92a3;font-size:11px;">' + escapeHtml(username) + "</div>"
-                            : "") +
-                        "<div>" +
-                        escapeHtml(truncar((m.message || "").trim(), 200)) +
-                        "</div>";
-                    if (username) {
-                        const abrir = document.createElement("div");
-                        abrir.style.cssText = "color:#4da3ff;font-size:11px;cursor:pointer;margin-top:4px;";
-                        abrir.textContent = "abrir " + username;
-                        abrir.addEventListener("click", () => {
-                            window.open("https://t.me/" + chat.username, "_blank");
-                        });
-                        item.appendChild(abrir);
-                    }
-                    lista.appendChild(item);
+                if (resultado.inexact && !lista.querySelector(".trp-aviso-inexact")) {
+                    const avisoInexact = document.createElement("div");
+                    avisoInexact.className = "trp-aviso-inexact";
+                    avisoInexact.style.cssText = "color:#8b92a3;font-size:11px;margin-bottom:6px;";
+                    avisoInexact.textContent = 'Resultado aproximado (o Telegram marcou essa busca como "inexact").';
+                    lista.insertBefore(avisoInexact, lista.firstChild);
+                }
+
+                for (const m of mensagens) {
+                    lista.appendChild(criarItemResultadoGlobal(m, chatsPorId));
+                }
+
+                const ultima = mensagens[mensagens.length - 1];
+                const chatIdUltima =
+                    ultima.peerId && ultima.peerId.channelId != null ? String(ultima.peerId.channelId) : null;
+                const chatUltima = chatIdUltima ? chatsPorId.get(chatIdUltima) : null;
+                if (chatUltima && chatUltima.accessHash != null) {
+                    proximaPagina = {
+                        offsetRate: resultado.nextRate ?? ultima.date,
+                        offsetPeer: new Api.InputPeerChannel({
+                            channelId: chatUltima.id,
+                            accessHash: chatUltima.accessHash,
+                        }),
+                        offsetId: ultima.id,
+                    };
+                    const botaoMais = botaoAcao(lista, "Carregar mais");
+                    botaoMais.className = "trp-carregar-mais";
+                    botaoMais.addEventListener("click", () => executarBuscaGlobal(true));
+                } else {
+                    // sem accessHash do ultimo chat nao da pra montar o
+                    // offsetPeer da proxima pagina - para por aqui.
+                    proximaPagina = null;
                 }
             } catch (erro) {
-                lista.innerHTML =
+                const mensagemErro =
                     '<div style="color:#ff6b6b;">Erro: ' +
                     escapeHtml(erro && erro.message ? erro.message : String(erro)) +
                     "</div>";
+                if (continuar) {
+                    lista.insertAdjacentHTML("beforeend", mensagemErro);
+                } else {
+                    lista.innerHTML = mensagemErro;
+                }
+                proximaPagina = null;
             } finally {
                 botaoBuscar.disabled = false;
             }
         }
 
-        botaoBuscar.addEventListener("click", executarBuscaGlobal);
+        botaoBuscar.addEventListener("click", () => executarBuscaGlobal(false));
         campoBusca.addEventListener("keydown", (ev) => {
-            if (ev.key === "Enter") executarBuscaGlobal();
+            if (ev.key === "Enter") executarBuscaGlobal(false);
         });
     }
 

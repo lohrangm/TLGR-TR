@@ -84,9 +84,10 @@ function normalizarTexto(texto) {
         .toLowerCase();
 }
 
-function buscarTexto(db, { termo, chatId, limite }) {
+function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor }) {
     return new Promise((resolve, reject) => {
         const termoNormalizado = normalizarTexto(termo);
+        const minimoReacoes = minimo || 0;
         const resultados = [];
         let visitados = 0;
         const LIMITE_VISITAS = 300000;
@@ -97,20 +98,37 @@ function buscarTexto(db, { termo, chatId, limite }) {
         pedido.onsuccess = () => {
             const cursor = pedido.result;
             if (!cursor || resultados.length >= limite || visitados >= LIMITE_VISITAS) {
-                resultados.sort((a, b) => (a.dateUtc < b.dateUtc ? 1 : -1));
+                if (ordenarPor === "reacoes") {
+                    resultados.sort((a, b) => (b.reactionTotal || 0) - (a.reactionTotal || 0));
+                } else {
+                    resultados.sort((a, b) => (a.dateUtc < b.dateUtc ? 1 : -1));
+                }
                 resolve(resultados.slice(0, limite));
                 return;
             }
             visitados++;
             const valor = cursor.value;
             const texto = valor.texto || valor.textPreview || "";
-            if (normalizarTexto(texto).includes(termoNormalizado)) {
+            if ((valor.reactionTotal || 0) >= minimoReacoes && normalizarTexto(texto).includes(termoNormalizado)) {
                 resultados.push(valor);
             }
             cursor.continue();
         };
         pedido.onerror = () => reject(pedido.error);
     });
+}
+
+function agruparPorChat(mensagens) {
+    const ordemChats = [];
+    const porChat = new Map();
+    for (const m of mensagens) {
+        if (!porChat.has(m.chatId)) {
+            porChat.set(m.chatId, { chatId: m.chatId, chatTitle: m.chatTitle, itens: [] });
+            ordemChats.push(m.chatId);
+        }
+        porChat.get(m.chatId).itens.push(m);
+    }
+    return ordemChats.map((chatId) => porChat.get(chatId));
 }
 
 function contarMensagensDoChat(db, chatId) {
@@ -289,5 +307,83 @@ assert(msgA5.visto === false, "marcarVisto(false) desmarca de novo");
 
 await marcarVisto(db, "chave-que-nao-existe", true);
 assert(true, "marcarVisto numa chave inexistente nao quebra (so nao faz nada)");
+
+// ---- buscarTexto: "grupo comum esconde os outros" e a correcao via paginacao ----
+// Grupo A (vem antes na ordem lexicografica da chave primaria) recebe 5
+// mensagens batendo com o termo; grupo Z (vem depois) recebe so 1. Com
+// limite curto, o cursor para dentro do grupo A e nunca chega no Z -
+// reproduz exatamente o bug relatado. Com limite maior (equivalente a
+// clicar "Mostrar mais"), o Z aparece.
+for (let i = 1; i <= 5; i++) {
+    await salvarMensagem(db, {
+        key: "A:" + (10 + i),
+        chatId: "A",
+        messageId: 10 + i,
+        reactionTotal: i,
+        chatTitle: "Grupo A",
+        texto: "promocao demais por aqui " + i,
+        dateUtc: "2026-02-0" + i + "T00:00:00Z",
+    });
+}
+await salvarMensagem(db, {
+    key: "Z:1",
+    chatId: "Z",
+    messageId: 1,
+    reactionTotal: 99,
+    chatTitle: "Grupo Z",
+    texto: "promocao incrivel aqui tambem",
+    dateUtc: "2026-02-10T00:00:00Z",
+});
+
+const paginaCurta = await buscarTexto(db, { termo: "promocao", chatId: null, limite: 3, ordenarPor: "data" });
+assert(paginaCurta.length === 3, "limite curto (3) retorna so 3 resultados (veio " + paginaCurta.length + ")");
+assert(
+    paginaCurta.every((m) => m.chatId === "A"),
+    "limite curto (3) fica preso no grupo A (lexicograficamente primeiro) - reproduz o bug relatado"
+);
+
+const paginaCompleta = await buscarTexto(db, { termo: "promocao", chatId: null, limite: 10, ordenarPor: "data" });
+assert(
+    paginaCompleta.some((m) => m.chatId === "Z"),
+    "limite maior (equivalente a \"Mostrar mais\") alcanca o grupo Z que ficava escondido"
+);
+assert(
+    paginaCompleta.length === 6,
+    "limite 10 traz todas as 6 mensagens que batem com o termo (veio " + paginaCompleta.length + ")"
+);
+
+const porReacoes = await buscarTexto(db, { termo: "promocao", chatId: null, limite: 10, ordenarPor: "reacoes" });
+assert(
+    porReacoes[0].chatId === "Z" && porReacoes[0].reactionTotal === 99,
+    "ordenarPor='reacoes' poe a mensagem de 99 reacoes primeiro"
+);
+assert(
+    porReacoes.every((m, i) => i === 0 || (m.reactionTotal || 0) <= (porReacoes[i - 1].reactionTotal || 0)),
+    "ordenarPor='reacoes' esta em ordem decrescente"
+);
+
+const comMinimo = await buscarTexto(db, {
+    termo: "promocao",
+    chatId: null,
+    minimo: 50,
+    limite: 10,
+    ordenarPor: "data",
+});
+assert(
+    comMinimo.length === 1 && comMinimo[0].chatId === "Z",
+    "filtro minimo=50 deixa so a mensagem do grupo Z (99 reacoes)"
+);
+
+// ---- agruparPorChat - base do agrupar/maximizar-minimizar por grupo na busca ----
+const agrupado = agruparPorChat(porReacoes);
+assert(agrupado.length === 2, "agruparPorChat junta num grupo por chat (veio " + agrupado.length + " grupos)");
+assert(
+    agrupado[0].chatId === "Z",
+    "agruparPorChat mantem o grupo do resultado mais relevante primeiro (Z, que veio primeiro por reacoes)"
+);
+assert(
+    agrupado[0].itens.length === 1 && agrupado[1].itens.length === 5,
+    "contagem de itens por grupo bate (Z=1, A=5)"
+);
 
 console.log("\nTODOS OS TESTES PASSARAM");
