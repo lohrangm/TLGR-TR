@@ -1090,3 +1090,27 @@ inteira de resultados - precisa investigar custo/limite antes de
 implementar.
 
 Versao 2026.10.08.9.
+
+## v2026.10.08.10: caixa de "busca ao vivo no servidor" desabilitada de verdade com "Todos os grupos"
+
+Ponto levantado pelo usuario, e correto: a limitacao de que a busca ao
+vivo no servidor ("Buscar mensagens") so funciona com um grupo
+especifico ja estava documentada num texto ao lado da caixa, mas a
+caixa continuava clicavel e marcavel com "Todos os grupos" selecionado -
+nesse estado ela nao fazia nada (o codigo ja ignorava
+`checkboxServidor.checked` quando `chatId` e nulo), mas ficava marcada
+na tela como se estivesse fazendo busca ao vivo em tudo. Um aviso em
+texto que exige leitura nao é garantia nenhuma contra o usuario marcar e
+achar que esta funcionando.
+
+Conserto: a caixa agora fica visivelmente desabilitada (opacidade baixa,
+sem clique) sempre que "Todos os grupos" esta selecionado, e se o
+usuario tinha marcado e volta pra "Todos", ela se desmarca sozinha - nunca
+fica marcada representando uma busca que nao esta de fato acontecendo.
+
+Confirmado tambem (sem mudanca de codigo): essa limitacao e exclusiva de
+"Buscar mensagens" - "Ver top reacoes" nunca teve busca ao vivo nenhuma
+(e 100% local), entao nao tem o mesmo risco de enganar com "Todos os
+grupos" porque nunca prometeu nada alem do que ja esta salvo.
+
+Versao 2026.10.08.10.

@@ -1476,6 +1476,22 @@
         blocoServidor.appendChild(labelServidor);
         corpo.appendChild(blocoServidor);
 
+        // So funciona com um grupo especifico - com "Todos os grupos" a
+        // caixa fica visivelmente desabilitada (nao so um aviso em texto que
+        // da pra nao notar) e e desmarcada sozinha, pra nunca ficar marcada
+        // enganando o usuario que ela esta fazendo busca ao vivo em tudo
+        // quando na pratica nao faz nada nesse estado.
+        function atualizarDisponibilidadeServidor() {
+            const disponivel = !!selectGrupo.value;
+            checkboxServidor.elemento.style.opacity = disponivel ? "1" : "0.35";
+            checkboxServidor.elemento.style.pointerEvents = disponivel ? "" : "none";
+            labelServidor.style.opacity = disponivel ? "1" : "0.55";
+            if (!disponivel && checkboxServidor.checked) {
+                checkboxServidor.checked = false;
+            }
+        }
+        atualizarDisponibilidadeServidor();
+
         const botaoBuscar = botaoAcao(corpo, "Buscar");
 
         const lista = document.createElement("div");
@@ -1712,6 +1728,7 @@
             }
         });
         selectGrupo.addEventListener("change", () => {
+            atualizarDisponibilidadeServidor();
             limiteAtual = 100;
             if (campoBusca.value.trim()) executarBusca();
         });

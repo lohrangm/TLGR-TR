@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.08.9
+// @version      2026.10.08.10
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -169484,7 +169484,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.08.9";
+window.TRP_VERSAO = "2026.10.08.10";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
@@ -170966,6 +170966,22 @@ window.TRP_VERSAO = "2026.10.08.9";
         blocoServidor.appendChild(labelServidor);
         corpo.appendChild(blocoServidor);
 
+        // So funciona com um grupo especifico - com "Todos os grupos" a
+        // caixa fica visivelmente desabilitada (nao so um aviso em texto que
+        // da pra nao notar) e e desmarcada sozinha, pra nunca ficar marcada
+        // enganando o usuario que ela esta fazendo busca ao vivo em tudo
+        // quando na pratica nao faz nada nesse estado.
+        function atualizarDisponibilidadeServidor() {
+            const disponivel = !!selectGrupo.value;
+            checkboxServidor.elemento.style.opacity = disponivel ? "1" : "0.35";
+            checkboxServidor.elemento.style.pointerEvents = disponivel ? "" : "none";
+            labelServidor.style.opacity = disponivel ? "1" : "0.55";
+            if (!disponivel && checkboxServidor.checked) {
+                checkboxServidor.checked = false;
+            }
+        }
+        atualizarDisponibilidadeServidor();
+
         const botaoBuscar = botaoAcao(corpo, "Buscar");
 
         const lista = document.createElement("div");
@@ -171202,6 +171218,7 @@ window.TRP_VERSAO = "2026.10.08.9";
             }
         });
         selectGrupo.addEventListener("change", () => {
+            atualizarDisponibilidadeServidor();
             limiteAtual = 100;
             if (campoBusca.value.trim()) executarBusca();
         });
