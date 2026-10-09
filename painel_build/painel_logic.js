@@ -542,7 +542,7 @@
             position: "fixed",
             top: "40px",
             right: "24px",
-            width: "460px",
+            width: "510px",
             maxHeight: "80vh",
             overflow: "hidden",
             display: "flex",

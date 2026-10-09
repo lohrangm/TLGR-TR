@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.09.17
+// @version      2026.10.09.18
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -169484,7 +169484,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.09.17";
+window.TRP_VERSAO = "2026.10.09.18";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
@@ -170032,7 +170032,7 @@ window.TRP_VERSAO = "2026.10.09.17";
             position: "fixed",
             top: "40px",
             right: "24px",
-            width: "460px",
+            width: "510px",
             maxHeight: "80vh",
             overflow: "hidden",
             display: "flex",

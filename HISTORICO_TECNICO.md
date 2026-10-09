@@ -1508,3 +1508,41 @@ ou simplesmente nao ache nada - mas isso nao esta confirmado em nenhuma doc
 oficial encontrada, so inferencia de como hashtag funciona em geral).
 
 Versao 2026.10.09.17.
+
+## v2026.10.09.18: reauditoria do bug do grupo excluido (nenhum bug novo encontrado) + painel mais largo
+
+Usuario reportou que, mesmo depois do fix da v16, um grupo desmarcado em
+"Configurar grupos" continua aparecendo tanto no scan quanto nas listas.
+Reauditoria completa de TODO ponto do codigo que le `carregarGruposExcluidos()`
+(7 ocorrencias): dropdown de escaneamento (`telaScanner`), loop real do scan
+"Todos" (`escanearTudo`), tabela de status "O que ja esta salvo"
+(`renderizarTabelaChats`), seletor de grupo em "Top reacoes"
+(`telaResultados`), em "Buscar mensagens", em "Verificar mensagem", e a
+propria tela "Configurar grupos" (que mostra todos, excluidos inclusive, de
+proposito - e ali que voce desmarca/marca de novo). Em todas as 7, o filtro
+`!excluidos.has(c.chatId)` (ou equivalente) esta presente e correto.
+
+Tambem conferido: o `chatId` usado no checkbox de exclusao
+(`String(dialog.id)`, vindo de `carregarGruposParaSelecao()`) e exatamente o
+mesmo formato usado no loop do scan (`escanearTudo`, mesma fonte
+`String(dialog.id)`) - ou seja, nao tem descompasso de formato de ID entre
+marcar um grupo como excluido e o scan reconhecer esse mesmo ID depois. O
+toggle salva na hora (`GM_setValue`) a cada clique, sem precisar de botao de
+salvar.
+
+Conclusao: nao foi encontrado nenhum bug no codigo atual - o comportamento
+de exclusao esta consistente em todo lugar. A explicacao mais provavel pro
+que o usuario esta vendo e o Tampermonkey ainda rodando uma versao antiga
+(anterior a v16) - o auto-update dele nao e instantaneo. Recomendado
+conferir o numero de versao mostrado dentro do proprio painel (deve bater
+com o `@version` mais recente) e, se estiver desatualizado, forcar manualmente
+em Tampermonkey Dashboard > Check for userscript updates (ou sobrescrever a
+aba do Telegram Web). Se depois disso o grupo ainda aparecer, e um bug
+diferente do que foi auditado aqui e precisa de mais informacao (qual tela
+exatamente, nome do grupo, se acontece so com "Todos" ou tambem escaneando
+ele especificamente).
+
+Tambem aumentada a largura do painel de 460px para 510px (+~11%), a pedido
+do usuario (ainda tinha conteudo cortado mesmo depois do aumento da v12).
+
+Versao 2026.10.09.18.
