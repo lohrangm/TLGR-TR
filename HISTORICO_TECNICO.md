@@ -1467,3 +1467,44 @@ de custo/flood antes de implementar, e so faria sentido como algo opcional
 (estilo o checkbox de verificar link), nao automatico pra cada resultado.
 
 Versao 2026.10.09.16.
+
+## v2026.10.09.17: busca por varias hashtags de uma vez na Busca avancada
+
+Depois de confirmar (direto na documentacao oficial do metodo e no blog do
+Telegram que anunciou o recurso, ago/2025) que a cota diaria + exigencia de
+Premium/Stars e especifica do modo de TEXTO LIVRE (`query`) - o modo
+`hashtag` nao e mencionado em nenhum dos dois textos como tendo essa
+restricao, e bate com o que o usuario observa na pratica (hashtag nunca
+deu erro de Premium) - o usuario concluiu, corretamente, que o modo texto
+livre dificilmente vai valer a pena usar (ficaria sempre dependendo de
+sobrar cota ou pagar Stars), e perguntou se dava pra tornar o modo hashtag
+mais util permitindo buscar varias hashtags de uma vez, separadas por ";".
+
+Implementado: no modo hashtag, o campo de busca aceita `termo1;termo2;termo3`
+- cada termo vira uma chamada separada de `channels.SearchPosts` (sequencial,
+nao em paralelo, pra nao arriscar flood wait geral mesmo sem o limite de
+cota/Premium entrar em jogo), os resultados de todos os termos entram na
+MESMA lista, sem reordenar entre si, com dedup por chatId+messageId (evita
+mostrar a mesma mensagem duas vezes se ela bater com mais de uma hashtag).
+Cada item mostra qual hashtag bateu, mas SO quando a busca tem mais de um
+termo (com um so, ja fica implicito). "Carregar mais" agora pagina todos os
+termos que ainda tem pagina em aberto ao mesmo tempo - cada termo guarda o
+proprio cursor de paginacao (`offsetRate`/`offsetPeer`/`offsetId`) de forma
+independente num Map, em vez de uma variavel unica como antes; termo que
+deu erro ou esgotou as paginas para de ser tentado nas proximas rodadas,
+sem travar os outros. Limite de 10 termos por busca - seguranca de bom
+senso contra flood, nao documentada como necessaria em lugar nenhum.
+Modo texto livre continua tratando ";" como parte literal do termo unico
+(nao separa nada) - separar la multiplicaria o consumo da cota diaria/Stars
+por termo extra, o oposto do que faria sentido dado que esse modo ja e
+escasso.
+
+Pendente, levantado na mesma conversa mas ainda sem resposta confirmada em
+documentacao oficial: se o parametro `hashtag` exige correspondencia exata
+com uma hashtag que alguem de fato usou (ao contrario de busca por
+substring), se e case-sensitive, e se aceita espaco/mais de uma palavra
+(hashtag de verdade nao aceita espaco, entao a expectativa e que isso falhe
+ou simplesmente nao ache nada - mas isso nao esta confirmado em nenhuma doc
+oficial encontrada, so inferencia de como hashtag funciona em geral).
+
+Versao 2026.10.09.17.

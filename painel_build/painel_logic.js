@@ -2227,6 +2227,12 @@
         labelModo.textContent = "Buscar por hashtag (sem #) em vez de texto livre";
         blocoModo.appendChild(checkboxHashtag.elemento);
         blocoModo.appendChild(labelModo);
+        blocoModo.insertAdjacentHTML(
+            "beforeend",
+            criarIconeInfoHtml(
+                'So no modo hashtag: da pra buscar VARIAS hashtags de uma vez, separadas por ";" (ex.: "promocao;oferta;desconto") - cada uma vira uma chamada separada pro servidor, os resultados saem juntos numa lista so, sem duplicata. So funciona assim no modo hashtag porque ele nao tem o limite de cota/Premium do texto livre (ver aviso no topo da tela) - no modo texto livre, ";" e tratado como parte literal do termo, nao separa nada (cada busca extra consumiria mais da cota diaria/Stars).'
+            )
+        );
         corpo.appendChild(blocoModo);
 
         // Extrai link t.me (de @usuario ou de convite) do TEXTO das mensagens
@@ -2250,7 +2256,11 @@
         );
         corpo.appendChild(blocoLinks);
 
-        const campoBusca = campoTexto(corpo, "Palavra-chave (texto livre) ou hashtag", "text");
+        const campoBusca = campoTexto(
+            corpo,
+            'Palavra-chave (texto livre) ou hashtag (varias: "a;b;c")',
+            "text"
+        );
         const historicoBuscaGlobal = ligarHistoricoBusca(campoBusca, CHAVE_HISTORICO_BUSCA_GLOBAL);
         const botaoBuscar = botaoAcao(corpo, "Buscar globalmente");
 
@@ -2310,14 +2320,23 @@
         // Pagina do jeito que a doc da API manda: offsetRate = nextRate da
         // pagina anterior (ou a data da ultima mensagem, se nextRate nao
         // vier); offsetPeer/offsetId = peer+id da ultima mensagem recebida.
-        // null quando a busca ainda nao rodou ou quando a ultima pagina nao
-        // trouxe como continuar. Segundo a doc da API, pedido de pagina
-        // seguinte (com continuar=true) nao conta na cota diaria gratis de
-        // busca por texto livre - so o primeiro pedido de cada busca nova
-        // consome cota.
-        let proximaPagina = null;
+        // Segundo a doc da API, pedido de pagina seguinte (continuar=true)
+        // nao conta na cota diaria gratis de busca por texto livre - so o
+        // primeiro pedido de cada busca nova consome cota.
+        //
+        // Varios termos (modo hashtag, separados por ";"): cada termo tem o
+        // SEU PROPRIO cursor de paginacao independente, guardado aqui -
+        // termo -> {offsetRate, offsetPeer, offsetId} (ainda tem pagina) ou
+        // null (esgotado, "Carregar mais" para de tentar esse termo). No
+        // modo com um termo so (a imensa maioria dos casos, inclusive todo
+        // texto livre), o Map tem uma entrada so e o comportamento e
+        // identico ao de antes dessa mudanca.
+        let paginasPorTermo = new Map();
+        // chatId:messageId ja renderizado nesta busca - evita mostrar a
+        // mesma mensagem duas vezes se ela bater com mais de uma hashtag.
+        const chavesVistasGlobal = new Set();
 
-        function criarItemResultadoGlobal(m, chatsPorId) {
+        function criarItemResultadoGlobal(m, chatsPorId, termoQueBateu) {
             const chatId = m.peerId && m.peerId.channelId != null ? String(m.peerId.channelId) : null;
             const chat = chatId ? chatsPorId.get(chatId) : null;
             const titulo = (chat && chat.title) || "Canal/grupo desconhecido";
@@ -2353,6 +2372,12 @@
                 (totalReacoes
                     ? '<div style="color:#8b92a3;font-size:11px;">' + totalReacoes + " reacoes</div>"
                     : "") +
+                // So aparece quando a busca tem mais de uma hashtag ao mesmo
+                // tempo (separadas por ";") - com uma so, ja esta implicito
+                // qual termo bateu, nao precisa poluir cada item repetindo.
+                (termoQueBateu
+                    ? '<div style="color:#5ec26a;font-size:11px;">#' + escapeHtml(termoQueBateu) + "</div>"
+                    : "") +
                 "<div>" +
                 escapeHtml(truncar((m.message || "").trim(), 200)) +
                 "</div>";
@@ -2368,95 +2393,160 @@
             return item;
         }
 
+        // So no modo hashtag o ";" separa varios termos - cada um vira uma
+        // chamada de API independente (ver comentario no icone "i" ao lado
+        // do checkbox). No modo texto livre o ";" fica como parte literal
+        // do termo unico, de proposito (nao multiplica o gasto de
+        // cota/Stars). Dedup por versao normalizada (minusculo), mas a
+        // chamada em si usa o texto original digitado (sem o "#" na
+        // frente). Limite de 10 termos por busca - seguranca contra
+        // flood/abuso, nao documentado em lugar nenhum como necessario, so
+        // bom senso.
+        function termosDaBusca(termoBruto) {
+            if (!checkboxHashtag.checked) return [termoBruto];
+            const vistos = new Set();
+            const termos = [];
+            for (const parte of termoBruto.split(";")) {
+                const limpo = parte.trim().replace(/^#/, "");
+                if (!limpo) continue;
+                const chave = limpo.toLowerCase();
+                if (vistos.has(chave)) continue;
+                vistos.add(chave);
+                termos.push(limpo);
+                if (termos.length >= 10) break;
+            }
+            return termos;
+        }
+
         async function executarBuscaGlobal(continuar) {
-            const termo = campoBusca.value.trim();
-            if (!termo) {
+            const termoBruto = campoBusca.value.trim();
+            if (!termoBruto) {
                 lista.innerHTML = '<div style="color:#8b92a3;">Digita algo pra buscar.</div>';
                 return;
             }
+            const termos = termosDaBusca(termoBruto);
+            if (!termos.length) {
+                lista.innerHTML = '<div style="color:#8b92a3;">Digita pelo menos uma hashtag valida.</div>';
+                return;
+            }
+
             if (!continuar) {
                 lista.innerHTML = '<div style="color:#8b92a3;">Buscando nos canais/grupos publicos do Telegram...</div>';
-                proximaPagina = { offsetRate: 0, offsetPeer: new Api.InputPeerEmpty({}), offsetId: 0 };
-                historicoBuscaGlobal.registrar(termo);
+                paginasPorTermo = new Map(
+                    termos.map((t) => [t, { offsetRate: 0, offsetPeer: new Api.InputPeerEmpty({}), offsetId: 0 }])
+                );
+                chavesVistasGlobal.clear();
+                historicoBuscaGlobal.registrar(termoBruto);
+                listaLinks.innerHTML = "";
+                linksVistos.clear();
+                tituloLinks.style.display = "none";
             }
+
+            const botaoAntigo = lista.querySelector(".trp-carregar-mais");
+            if (botaoAntigo) botaoAntigo.remove();
+            if (!continuar) lista.innerHTML = "";
+
             botaoBuscar.disabled = true;
             try {
-                const parametros = {
-                    offsetRate: proximaPagina.offsetRate,
-                    offsetPeer: proximaPagina.offsetPeer,
-                    offsetId: proximaPagina.offsetId,
-                    limit: 20,
-                };
-                if (checkboxHashtag.checked) {
-                    parametros.hashtag = termo.replace(/^#/, "");
-                } else {
-                    parametros.query = termo;
-                }
-                const resultado = await cliente.invoke(new Api.channels.SearchPosts(parametros));
-                const mensagens = resultado.messages || [];
-                const chatsPorId = new Map();
-                for (const c of resultado.chats || []) chatsPorId.set(String(c.id), c);
+                let erroDeAlgumTermo = null;
+                // Sequencial (nao em paralelo) de proposito - varios termos
+                // disparando tudo de uma vez arrisca flood wait mesmo sem a
+                // cota/Premium entrarem no caminho (todo metodo da API tem
+                // controle geral de taxa de pedidos, documentado ou nao).
+                for (const termoAtual of termos) {
+                    const pagina = paginasPorTermo.get(termoAtual);
+                    if (!pagina) continue; // esse termo ja esgotou as paginas dele
+                    try {
+                        const parametros = {
+                            offsetRate: pagina.offsetRate,
+                            offsetPeer: pagina.offsetPeer,
+                            offsetId: pagina.offsetId,
+                            limit: 20,
+                        };
+                        if (checkboxHashtag.checked) {
+                            parametros.hashtag = termoAtual;
+                        } else {
+                            parametros.query = termoAtual;
+                        }
+                        const resultado = await cliente.invoke(new Api.channels.SearchPosts(parametros));
+                        const mensagens = resultado.messages || [];
+                        const chatsPorId = new Map();
+                        for (const c of resultado.chats || []) chatsPorId.set(String(c.id), c);
 
-                if (!continuar) lista.innerHTML = "";
-                if (!continuar) {
-                    listaLinks.innerHTML = "";
-                    linksVistos.clear();
-                    tituloLinks.style.display = "none";
-                }
-                const botaoAntigo = lista.querySelector(".trp-carregar-mais");
-                if (botaoAntigo) botaoAntigo.remove();
+                        if (resultado.inexact && !lista.querySelector(".trp-aviso-inexact")) {
+                            const avisoInexact = document.createElement("div");
+                            avisoInexact.className = "trp-aviso-inexact";
+                            avisoInexact.style.cssText = "color:#8b92a3;font-size:11px;margin-bottom:6px;";
+                            avisoInexact.textContent =
+                                'Resultado aproximado (o Telegram marcou essa busca como "inexact").';
+                            lista.insertBefore(avisoInexact, lista.firstChild);
+                        }
 
-                if (!mensagens.length) {
-                    if (!continuar) lista.innerHTML = '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>';
-                    proximaPagina = null;
+                        for (const m of mensagens) {
+                            const chatIdMsg =
+                                m.peerId && m.peerId.channelId != null ? String(m.peerId.channelId) : "?";
+                            const chaveMsg = chatIdMsg + ":" + m.id;
+                            if (chavesVistasGlobal.has(chaveMsg)) continue;
+                            chavesVistasGlobal.add(chaveMsg);
+                            lista.appendChild(
+                                criarItemResultadoGlobal(m, chatsPorId, termos.length > 1 ? termoAtual : null)
+                            );
+                            if (checkboxLinks.checked) processarLinksDaMensagem(m.message);
+                        }
+
+                        if (mensagens.length) {
+                            const ultima = mensagens[mensagens.length - 1];
+                            const chatIdUltima =
+                                ultima.peerId && ultima.peerId.channelId != null
+                                    ? String(ultima.peerId.channelId)
+                                    : null;
+                            const chatUltima = chatIdUltima ? chatsPorId.get(chatIdUltima) : null;
+                            if (chatUltima && chatUltima.accessHash != null) {
+                                paginasPorTermo.set(termoAtual, {
+                                    offsetRate: resultado.nextRate ?? ultima.date,
+                                    offsetPeer: new Api.InputPeerChannel({
+                                        channelId: chatUltima.id,
+                                        accessHash: chatUltima.accessHash,
+                                    }),
+                                    offsetId: ultima.id,
+                                });
+                            } else {
+                                // sem accessHash do ultimo chat nao da pra montar o
+                                // offsetPeer da proxima pagina - esgota esse termo.
+                                paginasPorTermo.set(termoAtual, null);
+                            }
+                        } else {
+                            paginasPorTermo.set(termoAtual, null);
+                        }
+                    } catch (erro) {
+                        paginasPorTermo.set(termoAtual, null);
+                        erroDeAlgumTermo =
+                            (termos.length > 1 ? termoAtual + ": " : "") +
+                            (erro && erro.message ? erro.message : String(erro));
+                    }
+                }
+
+                if (!lista.childNodes.length) {
+                    lista.innerHTML = erroDeAlgumTermo
+                        ? '<div style="color:#ff6b6b;">Erro: ' + escapeHtml(erroDeAlgumTermo) + "</div>"
+                        : '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>';
                     return;
                 }
-
-                if (resultado.inexact && !lista.querySelector(".trp-aviso-inexact")) {
-                    const avisoInexact = document.createElement("div");
-                    avisoInexact.className = "trp-aviso-inexact";
-                    avisoInexact.style.cssText = "color:#8b92a3;font-size:11px;margin-bottom:6px;";
-                    avisoInexact.textContent = 'Resultado aproximado (o Telegram marcou essa busca como "inexact").';
-                    lista.insertBefore(avisoInexact, lista.firstChild);
+                if (erroDeAlgumTermo) {
+                    lista.insertAdjacentHTML(
+                        "beforeend",
+                        '<div style="color:#ff6b6b;font-size:11px;">Um dos termos deu erro: ' +
+                            escapeHtml(erroDeAlgumTermo) +
+                            "</div>"
+                    );
                 }
 
-                for (const m of mensagens) {
-                    lista.appendChild(criarItemResultadoGlobal(m, chatsPorId));
-                    if (checkboxLinks.checked) processarLinksDaMensagem(m.message);
-                }
-
-                const ultima = mensagens[mensagens.length - 1];
-                const chatIdUltima =
-                    ultima.peerId && ultima.peerId.channelId != null ? String(ultima.peerId.channelId) : null;
-                const chatUltima = chatIdUltima ? chatsPorId.get(chatIdUltima) : null;
-                if (chatUltima && chatUltima.accessHash != null) {
-                    proximaPagina = {
-                        offsetRate: resultado.nextRate ?? ultima.date,
-                        offsetPeer: new Api.InputPeerChannel({
-                            channelId: chatUltima.id,
-                            accessHash: chatUltima.accessHash,
-                        }),
-                        offsetId: ultima.id,
-                    };
+                const aindaTemPagina = [...paginasPorTermo.values()].some((p) => p != null);
+                if (aindaTemPagina) {
                     const botaoMais = botaoAcao(lista, "Carregar mais");
                     botaoMais.className = "trp-carregar-mais";
                     botaoMais.addEventListener("click", () => executarBuscaGlobal(true));
-                } else {
-                    // sem accessHash do ultimo chat nao da pra montar o
-                    // offsetPeer da proxima pagina - para por aqui.
-                    proximaPagina = null;
                 }
-            } catch (erro) {
-                const mensagemErro =
-                    '<div style="color:#ff6b6b;">Erro: ' +
-                    escapeHtml(erro && erro.message ? erro.message : String(erro)) +
-                    "</div>";
-                if (continuar) {
-                    lista.insertAdjacentHTML("beforeend", mensagemErro);
-                } else {
-                    lista.innerHTML = mensagemErro;
-                }
-                proximaPagina = null;
             } finally {
                 botaoBuscar.disabled = false;
             }
