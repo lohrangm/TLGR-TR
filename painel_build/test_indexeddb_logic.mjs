@@ -116,7 +116,8 @@ function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor, dataDe, da
             const valor = cursor.value;
             const texto = valor.texto || valor.textPreview || "";
             const textoNormalizado = normalizarTexto(texto);
-            const bateAlgumaPalavra = palavras.length > 0 && palavras.some((p) => textoNormalizado.includes(p));
+            // Mirror do fix: termo em branco agora bate com tudo.
+            const bateAlgumaPalavra = palavras.length === 0 || palavras.some((p) => textoNormalizado.includes(p));
             const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
             const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
             if ((valor.reactionTotal || 0) >= minimoReacoes && bateAlgumaPalavra && bateData) {
@@ -352,6 +353,19 @@ assert(filtradoPorChatErrado.length === 0, "filtro por chat respeita o grupo esc
 
 const semResultado = await buscarTexto(db, { termo: "termoquenaoexisteemlugarnenhum", chatId: null, limite: 10 });
 assert(semResultado.length === 0, "termo inexistente retorna lista vazia");
+
+// ---- buscarTexto: termo em branco agora bate com tudo (pedido do usuario,
+// "mostrar tudo" sem precisar digitar uma letra quase universal) ----
+const termoVazio = await buscarTexto(db, { termo: "", chatId: "A", limite: 10 });
+assert(
+    termoVazio.length === 4,
+    "FIX: termo em branco bate com todas as 4 mensagens do grupo A ate agora (A:1,A:2,A:3,A:4) (veio " + termoVazio.length + ")"
+);
+const termoSoEspaco = await buscarTexto(db, { termo: "   ", chatId: "A", limite: 10 });
+assert(
+    termoSoEspaco.length === 4,
+    "FIX: termo so com espacos tambem bate com tudo, igual termo vazio (veio " + termoSoEspaco.length + ")"
+);
 
 // ---- buscarTexto com termo de mais de uma palavra - reproduz o caso
 // relatado pelo usuario. Primeiro o termo inteiro era tratado como uma

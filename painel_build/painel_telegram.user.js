@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.09.15
+// @version      2026.10.09.16
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -169484,7 +169484,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.09.15";
+window.TRP_VERSAO = "2026.10.09.16";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
@@ -169843,10 +169843,13 @@ window.TRP_VERSAO = "2026.10.09.15";
                 const valor = cursor.value;
                 const texto = valor.texto || valor.textPreview || "";
                 const textoNormalizado = normalizarTexto(texto);
-                // palavras.length === 0 (termo vazio/so espaco) nunca bate -
-                // sem isso, .some() num array vazio da false, entao isso ja
-                // seria seguro de qualquer jeito, mas deixa explicito.
-                const bateAlgumaPalavra = palavras.length > 0 && palavras.some((p) => textoNormalizado.includes(p));
+                // palavras.length === 0 (termo em branco/so espaco) agora
+                // conta como "bate com tudo", de proposito - pedido do
+                // usuario pra poder deixar o campo vazio e usar esta busca
+                // como um "mostra tudo" (igual a ideia dele de digitar uma
+                // letra quase universal tipo "a", so que sem ficar cego a
+                // mensagem que por acaso nao tem essa letra).
+                const bateAlgumaPalavra = palavras.length === 0 || palavras.some((p) => textoNormalizado.includes(p));
                 const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
                 const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
                 if ((valor.reactionTotal || 0) >= minimoReacoes && bateAlgumaPalavra && bateData) {
@@ -170549,9 +170552,11 @@ window.TRP_VERSAO = "2026.10.09.15";
 
     // ---- Tela de configuracao: quais grupos/canais entram no "Todos" do scan ----
 
-    // Escanear um grupo especifico (escolhendo ele no dropdown da propria
-    // tela de scan) ignora essa lista de exclusao - ela so vale pra quando
-    // "Todos" esta selecionado ali.
+    // Grupo desmarcado aqui some de TODO lugar (tabela de status, seletores
+    // de busca e tambem do dropdown "Grupo/canal a escanear" da tela de
+    // scan) ate ser marcado de novo - um unico comportamento consistente em
+    // vez de excecao por tela. Pra escanear um grupo excluido manualmente,
+    // marca ele aqui de novo primeiro.
     async function telaConfigurarGrupos() {
         definirTituloTela("Configurar grupos");
         const corpo = corpoDoPainel();
@@ -170562,7 +170567,7 @@ window.TRP_VERSAO = "2026.10.09.15";
         aviso.innerHTML =
             '<span>Desmarca os grupos/canais que voce NAO quer no scan.</span>' +
             criarIconeInfoHtml(
-                'Desmarca os grupos/canais que voce NAO quer que o scan com "Todos" selecionado inclua. Grupo novo que voce entrar aparece aqui automaticamente, ja marcado pra escanear. Escolher um grupo especifico na tela de scan ignora essa lista (sempre escaneia, mesmo desmarcado aqui). Um grupo desmarcado aqui tambem some do seletor de grupo nas telas de busca e da tabela "O que ja esta salvo" na tela de scan, ate ser marcado de novo.'
+                'Desmarca os grupos/canais que voce NAO quer acompanhar. Grupo novo que voce entrar aparece aqui automaticamente, ja marcado pra escanear. Um grupo desmarcado aqui some de tudo ate ser marcado de novo: do scan com "Todos" selecionado, do dropdown "Grupo/canal a escanear" (pra escanear ele mesmo assim, marca de novo aqui primeiro), do seletor de grupo nas telas de busca, e da tabela "O que ja esta salvo" na tela de scan.'
             );
         corpo.appendChild(aviso);
 
@@ -170719,11 +170724,20 @@ window.TRP_VERSAO = "2026.10.09.15";
         corpo.appendChild(blocoSelecao);
         const selectGrupo = blocoSelecao.querySelector("#trp-select-grupo");
 
+        // Grupo desmarcado em "Configurar grupos" nao aparece aqui tambem -
+        // antes dessa correcao ele ficava escondido da tabela de status e
+        // dos seletores de busca mas continuava aparecendo neste dropdown
+        // (unica excecao que sobrou), o que o usuario reportou como
+        // inconsistente. Pra escanear um grupo excluido manualmente agora e
+        // so marcar ele de novo em "Configurar grupos" primeiro - mais
+        // simples que manter uma excecao silenciosa so neste seletor.
+        const excluidosParaDropdown = carregarGruposExcluidos();
         carregarGruposParaSelecao()
             .then((grupos) => {
                 const carregando = selectGrupo.querySelector("#trp-carregando-grupos");
                 if (carregando) carregando.remove();
                 for (const g of grupos) {
+                    if (excluidosParaDropdown.has(g.chatId)) continue;
                     const opcao = document.createElement("option");
                     opcao.value = g.chatId;
                     opcao.textContent = g.titulo;
@@ -170735,11 +170749,22 @@ window.TRP_VERSAO = "2026.10.09.15";
                 if (carregando) carregando.textContent = "Erro ao carregar lista de grupos.";
             });
 
+        // Texto longo de explicacao vira label curto + icone "i" (mesmo
+        // padrao das outras telas) - separado do "status" logo abaixo, que e
+        // so pra mensagem DINAMICA de progresso do scan (escanearTudo()
+        // escreve direto em status.textContent durante o scan).
+        const aviso = document.createElement("div");
+        aviso.style.cssText = "display:flex;align-items:center;gap:4px;color:#8b92a3;margin-bottom:6px;";
+        aviso.innerHTML =
+            '<span>Escolhe um grupo especifico ou deixa em "Todos".</span>' +
+            criarIconeInfoHtml(
+                'Com "Todos" selecionado, respeita o que estiver desmarcado em "Configurar grupos do scan" (grupo desmarcado la nao entra). Escolher um grupo especifico aqui sempre escaneia ele, mesmo que esteja desmarcado em "Configurar grupos" - so precisa estar presente nesta lista (ou seja, marcado la). Continua de onde parou da ultima vez - pode parar e retomar a hora que quiser. Historico antigo que ainda nao tem texto completo salvo (grupos escaneados antes da busca por palavra-chave existir) e completado automaticamente, sem precisar marcar nada.'
+            );
+        corpo.appendChild(aviso);
+
         const status = document.createElement("div");
         status.style.cssText = "color:#8b92a3;margin-bottom:10px;white-space:pre-line;";
-        status.textContent = scanEmAndamento
-            ? "Scan ja esta rodando..."
-            : 'Escolhe um grupo especifico ou deixa em "Todos" (respeita o que estiver desmarcado em "Configurar grupos do scan", na tela anterior). Continua de onde parou da ultima vez - pode parar e retomar a hora que quiser. Historico antigo que ainda nao tem texto completo salvo (grupos escaneados antes da busca por palavra-chave existir) e completado automaticamente, sem precisar marcar nada.';
+        status.textContent = scanEmAndamento ? "Scan ja esta rodando..." : "";
         corpo.appendChild(status);
 
         const botaoIniciar = botaoAcao(corpo, scanEmAndamento ? "Scan em andamento..." : "Iniciar scan");
@@ -171219,9 +171244,12 @@ window.TRP_VERSAO = "2026.10.09.15";
         chats.sort((a, b) => (a.chatTitle || "").localeCompare(b.chatTitle || ""));
 
         const aviso = document.createElement("div");
-        aviso.style.cssText = "color:#8b92a3;margin-bottom:10px;";
-        aviso.textContent =
-            "Busca so dentro do que ja foi escaneado. Grupo escaneado antes dessa funcao existir completa o texto do historico antigo sozinho na proxima vez que passar pelo scan (tela de scan mostra \"completando historico antigo\" enquanto isso roda).";
+        aviso.style.cssText = "display:flex;align-items:center;gap:4px;color:#8b92a3;margin-bottom:10px;";
+        aviso.innerHTML =
+            "<span>Busca so dentro do que ja foi escaneado.</span>" +
+            criarIconeInfoHtml(
+                'Grupo escaneado antes dessa funcao existir completa o texto do historico antigo sozinho na proxima vez que passar pelo scan (tela de scan mostra "completando historico antigo" enquanto isso roda).'
+            );
         corpo.appendChild(aviso);
 
         const filtros = document.createElement("div");
@@ -171261,7 +171289,7 @@ window.TRP_VERSAO = "2026.10.09.15";
         const inputDataDe = filtrosData.querySelector("#trp-busca-data-de");
         const inputDataAte = filtrosData.querySelector("#trp-busca-data-ate");
 
-        const campoBusca = campoTexto(corpo, "Palavra ou trecho a buscar", "text");
+        const campoBusca = campoTexto(corpo, "Palavra ou trecho a buscar (em branco = todas as mensagens)", "text");
         const historicoBusca = ligarHistoricoBusca(campoBusca, CHAVE_HISTORICO_BUSCA_LOCAL);
 
         // Busca hibrida: alem do nosso banco local (substring, OU logico
@@ -171298,7 +171326,7 @@ window.TRP_VERSAO = "2026.10.09.15";
         blocoOcultarVistos.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12px;";
         const checkboxOcultarVistos = criarQuadradoMarcavel(false, (marcado) => {
             ocultarVistos = marcado;
-            if (campoBusca.value.trim()) executarBusca();
+            if (jaBuscou) executarBusca();
         });
         const labelOcultarVistos = document.createElement("span");
         labelOcultarVistos.style.color = "#8b92a3";
@@ -171335,6 +171363,8 @@ window.TRP_VERSAO = "2026.10.09.15";
         corpo.appendChild(statusCarregando);
 
         const lista = document.createElement("div");
+        lista.innerHTML =
+            '<div style="color:#8b92a3;">Digita algo pra buscar, ou deixa em branco e aperta "Buscar" pra trazer todas as mensagens (sujeito aos filtros de grupo/data/minimo).</div>';
         corpo.appendChild(lista);
 
         // Cresce com "Mostrar mais" - comeca em 100. buscarTexto() ja
@@ -171344,6 +171374,14 @@ window.TRP_VERSAO = "2026.10.09.15";
         // mais risco de um grupo sozinho "engolir" o limite e esconder os
         // demais (ver nota em cima de buscarTexto()).
         let limiteAtual = 100;
+        // Vira true na primeira vez que o usuario aperta "Buscar"/Enter -
+        // so a partir dai os filtros (grupo/ordenar/minimo/data/ocultar
+        // vistos) re-executam a busca sozinhos ao mudar. Antes disso, mudar
+        // um filtro nao faz nada (a tela ainda nao tem nenhum resultado pra
+        // atualizar). Campo em branco agora E uma busca valida (ver nota
+        // em executarBusca()), entao nao da mais pra usar
+        // "campoBusca.value.trim()" como sinal de "ja buscou alguma vez".
+        let jaBuscou = false;
 
         function criarItemResultado(m) {
             const texto = m.texto || m.textPreview || "";
@@ -171432,10 +171470,14 @@ window.TRP_VERSAO = "2026.10.09.15";
 
         async function executarBusca() {
             const termo = campoBusca.value.trim();
-            if (!termo) {
-                lista.innerHTML = '<div style="color:#8b92a3;">Digita algo pra buscar.</div>';
-                return;
-            }
+            jaBuscou = true;
+            // Campo em branco agora e uma busca valida (de proposito -
+            // pedido do usuario pra poder "mostrar tudo" sem precisar
+            // digitar uma letra quase universal) - buscarTexto() trata
+            // termo vazio como "bate com qualquer mensagem" (ver comentario
+            // la). So nao registra no historico de autocomplete um termo
+            // em branco, isso nao ajudaria ninguem.
+            if (termo) historicoBusca.registrar(termo);
             // So mostra "Buscando..." na propria lista quando ela ja esta
             // vazia (primeira busca desse termo). Em "Mostrar mais" ou troca
             // de termo/filtro a lista ja tem resultado anterior na tela -
@@ -171451,7 +171493,6 @@ window.TRP_VERSAO = "2026.10.09.15";
                 lista.innerHTML = '<div style="color:#8b92a3;">Buscando...</div>';
             }
             statusCarregando.textContent = "Buscando...";
-            historicoBusca.registrar(termo);
             try {
                 await executarBuscaPorDentro();
             } finally {
@@ -171603,23 +171644,23 @@ window.TRP_VERSAO = "2026.10.09.15";
         selectGrupo.addEventListener("change", () => {
             atualizarDisponibilidadeServidor();
             limiteAtual = 100;
-            if (campoBusca.value.trim()) executarBusca();
+            if (jaBuscou) executarBusca();
         });
         selectOrdenar.addEventListener("change", () => {
             limiteAtual = 100;
-            if (campoBusca.value.trim()) executarBusca();
+            if (jaBuscou) executarBusca();
         });
         inputMinimo.addEventListener("change", () => {
             limiteAtual = 100;
-            if (campoBusca.value.trim()) executarBusca();
+            if (jaBuscou) executarBusca();
         });
         inputDataDe.addEventListener("change", () => {
             limiteAtual = 100;
-            if (campoBusca.value.trim()) executarBusca();
+            if (jaBuscou) executarBusca();
         });
         inputDataAte.addEventListener("change", () => {
             limiteAtual = 100;
-            if (campoBusca.value.trim()) executarBusca();
+            if (jaBuscou) executarBusca();
         });
     }
 
@@ -171779,6 +171820,13 @@ window.TRP_VERSAO = "2026.10.09.15";
             // o dado certo ja vem pronto, sem risco de confundir com um
             // numero qualquer digitado no texto, tipo um preco).
             const { total: totalReacoes } = extrairReacoes(m);
+            // participantsCount TAMBEM ja vem de graca: channels.SearchPosts
+            // devolve, junto com as mensagens, a lista "chats" com o objeto
+            // Channel completo de cada canal/grupo referenciado (e'
+            // exatamente isso que chatsPorId guarda) - e o Channel basico ja
+            // inclui participantsCount, sem precisar de nenhuma chamada
+            // extra (channels.GetFullChannel) so pra mostrar esse numero.
+            const membros = chat && chat.participantsCount != null ? chat.participantsCount : null;
 
             const item = document.createElement("div");
             item.style.cssText = "padding:8px 0;border-bottom:1px solid #2a2f3a;";
@@ -171789,6 +171837,9 @@ window.TRP_VERSAO = "2026.10.09.15";
                 tipo +
                 ")</div>" +
                 (username ? '<div style="color:#8b92a3;font-size:11px;">' + escapeHtml(username) + "</div>" : "") +
+                (membros != null
+                    ? '<div style="color:#8b92a3;font-size:11px;">' + membros + " membros</div>"
+                    : "") +
                 (totalReacoes
                     ? '<div style="color:#8b92a3;font-size:11px;">' + totalReacoes + " reacoes</div>"
                     : "") +
@@ -171920,13 +171971,20 @@ window.TRP_VERSAO = "2026.10.09.15";
         botaoVoltar(corpo);
 
         const aviso = document.createElement("div");
-        aviso.style.cssText = "color:#8b92a3;margin-bottom:10px;";
-        aviso.textContent =
-            'Confere se uma mensagem especifica (por exemplo, algo que voce viu na busca nativa do Telegram mas nao apareceu em "Buscar mensagens" aqui) ja esta no nosso banco local, e compara com o que existe ao vivo no Telegram agora. Serve pra saber se e falta de scan (ainda nao chegou la) ou outra coisa.';
+        aviso.style.cssText = "display:flex;align-items:center;gap:4px;color:#8b92a3;margin-bottom:10px;";
+        aviso.innerHTML =
+            "<span>Confere se uma mensagem especifica ja esta no nosso banco local.</span>" +
+            criarIconeInfoHtml(
+                'Por exemplo, algo que voce viu na busca nativa do Telegram mas nao apareceu em "Buscar mensagens" aqui. Compara com o que existe ao vivo no Telegram agora - serve pra saber se e falta de scan (ainda nao chegou la) ou outra coisa (texto editado depois, mensagem apagada, etc.).'
+            );
         corpo.appendChild(aviso);
 
         const db = await abrirBanco();
-        const chats = await listarChats(db);
+        // Mesmo filtro das demais telas - grupo desmarcado em "Configurar
+        // grupos" nao aparece no seletor (ver comentario em
+        // renderizarTabelaChats()).
+        const excluidos = carregarGruposExcluidos();
+        const chats = (await listarChats(db)).filter((c) => !excluidos.has(c.chatId));
         chats.sort((a, b) => (a.chatTitle || "").localeCompare(b.chatTitle || ""));
 
         if (!chats.length) {

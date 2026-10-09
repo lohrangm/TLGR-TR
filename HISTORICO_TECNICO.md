@@ -1393,3 +1393,77 @@ de nenhum termo bater, e por isso tambem pega posts so de midia/sem texto
 com reacao alta que uma busca por palavra nunca acharia.
 
 Versao 2026.10.09.15.
+
+## v2026.10.09.16: termo em branco = mostrar tudo, bug do grupo excluido ainda aparecer no scan, auditoria de consistencia nas demais telas, contagem de membros na Busca avancada
+
+Pacote de pedidos depois de confirmar o fix anterior:
+
+**1. Termo em branco em "Buscar mensagens" agora bate com tudo.** Evolucao
+direta da ideia do usuario de usar uma letra quase universal (tipo "a") pra
+aproximar "mostra tudo" - ele tentou um espaco em branco e a tela rejeitava
+("Digita algo pra buscar"). `buscarTexto()` agora trata termo vazio/so
+espaco como "bate com qualquer mensagem" (antes so contava como "nunca
+bate", por seguranca defensiva - nunca era de fato exercitado, porque a
+propria tela bloqueava a busca antes de chegar la). É estritamente melhor
+que a letra "a": nao fica cego a nenhuma mensagem (nem a que por acaso nao
+tem essa letra). Pra isso funcionar nos filtros que re-executam a busca
+sozinhos ao trocar (grupo/ordenar/minimo/data/ocultar vistos), a condicao
+desses listeners deixou de ser "tem texto no campo" (`campoBusca.value.trim()`)
+e virou uma flag `jaBuscou` (true depois do primeiro "Buscar"/Enter,
+independente do campo estar vazio ou nao). Confirmado no codigo-fonte do
+teleproto (`client/messages.js`) que `iterMessages` ja manda `q: search ||
+""` pro `messages.Search` quando nao ha termo - termo vazio e um caso ja
+suportado nativamente pela biblioteca/API (o mesmo mecanismo que navegar o
+historico por filtro usa), nao uma gambiarra por cima dela. Isso vale
+tambem pra busca ao vivo no servidor (quando marcada, com um grupo
+especifico selecionado): sem termo, ela traz as 50 mensagens mais recentes
+sem filtro de texto nenhum.
+
+**2. Bug: grupo desmarcado em "Configurar grupos" continuava no dropdown
+"Grupo/canal a escanear" da tela de scan.** Intencional desde a v14 (ver
+comentario que dizia "escanear um grupo especifico ignora essa lista"), mas
+o usuario relatou como inconsistente - os outros lugares (tabela de status,
+seletores de busca) ja escondiam o grupo excluido havia tempo. Removida a
+excecao: agora e uma regra unica, sem excecao por tela - grupo desmarcado
+some de tudo, inclusive desse dropdown, ate ser marcado de novo em
+"Configurar grupos". (Confirmado tambem: a exclusao ja era salva na hora via
+GM_setValue a cada clique na caixinha - nao precisa nem nunca precisou de
+botao de salvar.)
+
+**3. Auditoria de consistencia nas demais telas** (pedido do usuario:
+"passa o pente fino em tudo que eu te falei... verifica a replica pra
+tudo"). Resultado da varredura:
+- Texto longo em "Buscar mensagens" (sobre buscar so no que ja foi
+  escaneado) virou label curto + icone "i", mesmo padrao das outras telas -
+  tinha ficado de fora da v14.
+- Texto longo em "Verificar mensagem" (o que essa tela faz) idem.
+- Texto longo na tela de scan (escolher grupo especifico ou "Todos") idem -
+  separado do elemento de status dinamico do proprio scan (que continua
+  mostrando progresso em texto puro, isso nao muda).
+- "Verificar mensagem" tambem ganhou o filtro de grupo excluido no seu
+  proprio seletor de grupo (nao tinha, diferente das outras telas de
+  pesquisa).
+- Telas de login/conexao (credenciais, conectando, erro) foram conferidas e
+  NAO se aplicam - sao mensagens curtas de status transitorio, nao textos
+  de explicacao permanente, nao tem o que iconizar ali.
+
+**4. Contagem de membros na Busca avancada, de graca.** Pedido antigo (v9)
+tinha ficado como "fica pra depois, precisa investigar custo" -
+`channels.GetFullChannel` (que tem `participantsCount` E `onlineCount`)
+exigiria uma chamada de API extra por canal, cara demais pra uma lista
+inteira de resultado. Na investigacao de hoje, achado melhor: o proprio
+`channels.SearchPosts` ja devolve, JUNTO com as mensagens (no array
+"chats", convencao padrao da API do Telegram), o objeto `Channel` completo
+de cada canal/grupo referenciado - e esse objeto basico (sem precisar do
+"Full") ja tem `participantsCount`. Ou seja, o numero de membros sempre
+esteve disponivel de graca na mesma resposta que a Busca avancada ja fazia,
+so nao estava sendo lido. Cada resultado agora mostra "N membros" quando
+esse campo vem preenchido, sem nenhuma chamada extra.
+
+`onlineCount` (quantos estao online agora) e `about` (bio do canal) SO
+existem no `ChannelFull`, que ai sim exige uma chamada
+`channels.GetFullChannel` por canal - continua precisando de investigacao
+de custo/flood antes de implementar, e so faria sentido como algo opcional
+(estilo o checkbox de verificar link), nao automatico pra cada resultado.
+
+Versao 2026.10.09.16.
