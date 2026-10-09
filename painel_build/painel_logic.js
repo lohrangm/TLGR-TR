@@ -22,6 +22,8 @@
     const CHAVE_API_HASH = "trp_api_hash";
     const CHAVE_SESSAO = "trp_session";
     const CHAVE_GRUPOS_EXCLUIDOS = "trp_grupos_excluidos";
+    const CHAVE_HISTORICO_BUSCA_LOCAL = "trp_historico_busca_local";
+    const CHAVE_HISTORICO_BUSCA_GLOBAL = "trp_historico_busca_global";
 
     // So guarda a lista de EXCLUIDOS (nao a de incluidos) - assim, por
     // padrao, tudo entra no scan "Todos", e grupo novo que a conta entrar
@@ -36,6 +38,58 @@
 
     function salvarGruposExcluidos(excluidos) {
         GM_setValue(CHAVE_GRUPOS_EXCLUIDOS, JSON.stringify([...excluidos]));
+    }
+
+    // ---- Historico de termos buscados (preenchimento automatico do navegador) ----
+
+    function carregarHistoricoBusca(chave) {
+        try {
+            return JSON.parse(GM_getValue(chave, "[]"));
+        } catch (erro) {
+            return [];
+        }
+    }
+
+    // Mais recente primeiro, sem repetir o mesmo termo duas vezes, capado
+    // em 20 pra nao crescer pra sempre.
+    function salvarTermoNoHistorico(chave, termo) {
+        if (!termo) return;
+        const historico = carregarHistoricoBusca(chave).filter((t) => t !== termo);
+        historico.unshift(termo);
+        GM_setValue(chave, JSON.stringify(historico.slice(0, 20)));
+    }
+
+    // Liga um <input> de busca a um <datalist> com o historico de termos ja
+    // buscados antes (persistido entre sessoes via GM_getValue/GM_setValue) -
+    // o proprio navegador mostra isso como sugestao/preenchimento automatico
+    // nativo ao digitar, sem precisar de nenhum componente customizado.
+    // "Capricho" pedido pelo usuario - simples de fazer com HTML puro (sem
+    // essa lista, cada busca comeca sempre do zero, sem nenhum lembrete do
+    // que ja foi pesquisado antes).
+    let contadorDatalistHistorico = 0;
+    function ligarHistoricoBusca(input, chave) {
+        const idDatalist = "trp-historico-" + contadorDatalistHistorico++;
+        const datalist = document.createElement("datalist");
+        datalist.id = idDatalist;
+        input.insertAdjacentElement("afterend", datalist);
+        input.setAttribute("list", idDatalist);
+
+        function repopular() {
+            datalist.innerHTML = "";
+            for (const termo of carregarHistoricoBusca(chave)) {
+                const opcao = document.createElement("option");
+                opcao.value = termo;
+                datalist.appendChild(opcao);
+            }
+        }
+        repopular();
+
+        return {
+            registrar(termo) {
+                salvarTermoNoHistorico(chave, termo);
+                repopular();
+            },
+        };
     }
 
     const NOME_BANCO = "TopReacoesTelegram";
@@ -475,7 +529,7 @@
             position: "fixed",
             top: "40px",
             right: "24px",
-            width: "420px",
+            width: "460px",
             maxHeight: "80vh",
             overflow: "hidden",
             display: "flex",
@@ -600,7 +654,7 @@
         cabecalho.style.cssText =
             "display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;";
         cabecalho.innerHTML =
-            '<strong>Top Reacoes</strong>' +
+            '<strong id="trp-titulo-tela">Top Reacoes</strong>' +
             '<span style="color:#8b92a3;font-size:11px;margin-left:6px;">v' +
             escapeHtml(VERSAO_PAINEL) +
             "</span>" +
@@ -611,6 +665,16 @@
         painel.appendChild(cabecalho);
         cabecalho.querySelector("#trp-fechar").addEventListener("click", alternarPainel);
         cabecalho.querySelector("#trp-sair").addEventListener("click", aoClicarSair);
+    }
+
+    // Antes o cabecalho sempre mostrava so "Top Reacoes", igual em
+    // qualquer tela - sem olhar o corpo, nao dava pra saber em qual tela
+    // o painel estava (ex. depois de rolar pro topo). Cada tela chama isso
+    // logo no inicio com seu proprio nome; telaLogado() (o menu) chama
+    // com null, que volta a mostrar so o nome do app.
+    function definirTituloTela(nomeTela) {
+        const titulo = painel && painel.querySelector("#trp-titulo-tela");
+        if (titulo) titulo.textContent = nomeTela ? "Top Reacoes - " + nomeTela : "Top Reacoes";
     }
 
     // So aparece quando tem sessao ativa (telaLogado chama isso). Fica
@@ -747,6 +811,23 @@
         };
     }
 
+    // "i" pequeno com tooltip nativo (atributo title, o navegador mostra
+    // sozinho ao passar o mouse por cima) - usado pra tirar explicacao
+    // longa de cima da tela (fica tudo poluido com paragrafo grande
+    // sempre visivel) sem perder a informacao, so escondendo ela atras de
+    // um hover. Devolve uma STRING de HTML (nao um elemento), pra poder
+    // ser concatenada direto num innerHTML ou injetada com
+    // insertAdjacentHTML.
+    function criarIconeInfoHtml(textoCompleto) {
+        return (
+            ' <span style="display:inline-block;width:14px;height:14px;line-height:13px;text-align:center;' +
+            "border-radius:50%;border:1px solid #8b92a3;color:#8b92a3;font-size:10px;font-style:normal;" +
+            'cursor:help;vertical-align:middle;" title="' +
+            escapeHtml(textoCompleto) +
+            '">i</span>'
+        );
+    }
+
     function textoAviso(corpo, mensagem, cor) {
         let aviso = corpo.querySelector(".trp-aviso");
         if (!aviso) {
@@ -799,6 +880,7 @@
     }
 
     function telaCredenciais() {
+        definirTituloTela(null);
         const corpo = corpoDoPainel();
         corpo.innerHTML =
             '<div style="color:#8b92a3;margin-bottom:10px;">' +
@@ -833,6 +915,7 @@
     }
 
     async function reconectarComSessaoSalva(apiId, apiHash, sessaoSalva) {
+        definirTituloTela(null);
         const corpo = corpoDoPainel();
         textoAviso(corpo, "Reconectando com a sessao salva...");
         try {
@@ -854,6 +937,7 @@
     }
 
     function telaLogin(apiId, apiHash) {
+        definirTituloTela(null);
         const corpo = corpoDoPainel();
         const telefone = campoTexto(corpo, "Numero de telefone (com DDI, ex: +5511999999999)", "text");
         const botao = botaoAcao(corpo, "Entrar");
@@ -896,6 +980,7 @@
     }
 
     async function telaLogado() {
+        definirTituloTela(null);
         const corpo = corpoDoPainel();
         textoAviso(corpo, "Carregando dados da conta...");
         try {
@@ -913,8 +998,6 @@
                 "</div>";
             const botaoEscanear = botaoAcao(corpo, "Escanear grupos/canais");
             botaoEscanear.addEventListener("click", () => telaScanner());
-            const botaoConfigurarGrupos = botaoAcao(corpo, "Configurar grupos do scan (incluir/excluir)");
-            botaoConfigurarGrupos.addEventListener("click", () => telaConfigurarGrupos());
             const botaoResultados = botaoAcao(corpo, "Ver top reacoes");
             botaoResultados.addEventListener("click", () => telaResultados());
             const botaoBusca = botaoAcao(corpo, "Buscar mensagens");
@@ -923,6 +1006,11 @@
             botaoBuscaAvancada.addEventListener("click", () => telaBuscaAvancada());
             const botaoVerificar = botaoAcao(corpo, "Verificar mensagem (local vs. ao vivo)");
             botaoVerificar.addEventListener("click", () => telaVerificarMensagem());
+            // Ultimo da lista de proposito - e um item de configuracao, nao
+            // uma ferramenta do dia-a-dia como as de cima (pedido do usuario).
+            const botaoConfigurarGrupos = botaoAcao(corpo, "Configurar grupos do scan (incluir/excluir)");
+            botaoConfigurarGrupos.style.background = "#2a2f3a";
+            botaoConfigurarGrupos.addEventListener("click", () => telaConfigurarGrupos());
             atualizarVisibilidadeSair(true);
         } catch (erro) {
             textoAviso(corpo, "Erro ao carregar a conta: " + (erro && erro.message ? erro.message : erro), "#ff6b6b");
@@ -965,13 +1053,17 @@
     // tela de scan) ignora essa lista de exclusao - ela so vale pra quando
     // "Todos" esta selecionado ali.
     async function telaConfigurarGrupos() {
+        definirTituloTela("Configurar grupos");
         const corpo = corpoDoPainel();
         botaoVoltar(corpo);
 
         const aviso = document.createElement("div");
-        aviso.style.cssText = "color:#8b92a3;margin-bottom:10px;";
-        aviso.textContent =
-            'Desmarca os grupos/canais que voce NAO quer que o scan com "Todos" selecionado inclua. Grupo novo que voce entrar aparece aqui automaticamente, ja marcado pra escanear. Escolher um grupo especifico na tela de scan ignora essa lista (sempre escaneia, mesmo desmarcado aqui).';
+        aviso.style.cssText = "display:flex;align-items:center;gap:4px;color:#8b92a3;margin-bottom:10px;";
+        aviso.innerHTML =
+            '<span>Desmarca os grupos/canais que voce NAO quer no scan.</span>' +
+            criarIconeInfoHtml(
+                'Desmarca os grupos/canais que voce NAO quer que o scan com "Todos" selecionado inclua. Grupo novo que voce entrar aparece aqui automaticamente, ja marcado pra escanear. Escolher um grupo especifico na tela de scan ignora essa lista (sempre escaneia, mesmo desmarcado aqui). Um grupo desmarcado aqui tambem some do seletor de grupo nas telas de busca e da tabela "O que ja esta salvo" na tela de scan, ate ser marcado de novo.'
+            );
         corpo.appendChild(aviso);
 
         const lista = document.createElement("div");
@@ -1047,10 +1139,17 @@
     // vezes durante um scan em andamento, repetir o iterDialogs a cada
     // checkpoint seria caro e sem necessidade).
     async function renderizarTabelaChats(container, db, ultimasMensagens) {
-        const chats = await listarChats(db);
+        // Grupo desmarcado em "Configurar grupos" some daqui tambem (e do
+        // seletor de grupo nas telas de busca) - so volta a aparecer se o
+        // usuario marcar ele de novo la. Pedido do usuario: grupo que ele
+        // nao quer mais acompanhar nao devia continuar poluindo a lista de
+        // status so porque foi escaneado um dia.
+        const excluidos = carregarGruposExcluidos();
+        const chats = (await listarChats(db)).filter((c) => !excluidos.has(c.chatId));
         chats.sort((a, b) => (a.chatTitle || "").localeCompare(b.chatTitle || ""));
         if (!chats.length) {
-            container.innerHTML = '<div style="color:#8b92a3;">Nenhum grupo escaneado ainda.</div>';
+            container.innerHTML =
+                '<div style="color:#8b92a3;">Nenhum grupo escaneado ainda (ou todos os escaneados estao desmarcados em "Configurar grupos").</div>';
             return;
         }
         const linhas = [];
@@ -1086,17 +1185,24 @@
                     "</tr>"
             );
         }
+        // white-space:nowrap nos cabecalhos - eram so 1-2 palavras curtas
+        // ("Status", "Ultimo scan") mas a coluna ficava estreita demais
+        // (espremida pela coluna "Grupo", que precisa do espaco pro nome
+        // do chat) e quebrava em 2 linhas, ficando com cara de erro.
         container.innerHTML =
             '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
             '<thead><tr style="color:#8b92a3;text-align:left;">' +
-            '<th style="padding:4px 6px;">Grupo</th><th style="padding:4px 6px;text-align:right;">Salvas</th>' +
-            '<th style="padding:4px 6px;">Status</th><th style="padding:4px 6px;">Ultimo scan</th>' +
+            '<th style="padding:4px 6px;white-space:nowrap;">Grupo</th>' +
+            '<th style="padding:4px 6px;text-align:right;white-space:nowrap;">Salvas</th>' +
+            '<th style="padding:4px 6px;white-space:nowrap;">Status</th>' +
+            '<th style="padding:4px 6px;white-space:nowrap;">Ultimo scan</th>' +
             "</tr></thead><tbody>" +
             linhas.join("") +
             "</tbody></table>";
     }
 
     async function telaScanner() {
+        definirTituloTela("Escanear");
         const corpo = corpoDoPainel();
         botaoVoltar(corpo);
 
@@ -1385,11 +1491,15 @@
     // ---- Tela de resultados ----
 
     async function telaResultados() {
+        definirTituloTela("Top reacoes");
         const corpo = corpoDoPainel();
         botaoVoltar(corpo);
 
         const db = await abrirBanco();
-        const chats = await listarChats(db);
+        // Grupo desmarcado em "Configurar grupos" nao aparece no seletor -
+        // ver comentario em renderizarTabelaChats().
+        const excluidos = carregarGruposExcluidos();
+        const chats = (await listarChats(db)).filter((c) => !excluidos.has(c.chatId));
         chats.sort((a, b) => (a.chatTitle || "").localeCompare(b.chatTitle || ""));
 
         const filtros = document.createElement("div");
@@ -1428,6 +1538,24 @@
         corpo.appendChild(filtrosData);
         const inputDataDe = filtrosData.querySelector("#trp-top-data-de");
         const inputDataAte = filtrosData.querySelector("#trp-top-data-ate");
+
+        // Oculta (so na exibicao, nao apaga nada) as mensagens ja marcadas
+        // como "visto" na caixinha individual de cada item - pra quem usa
+        // essa lista como um "pra fazer" e nao quer ficar rolando por cima
+        // do que ja viu toda vez que abre a tela de novo.
+        let ocultarVistos = false;
+        const blocoOcultarVistos = document.createElement("div");
+        blocoOcultarVistos.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12px;";
+        const checkboxOcultarVistos = criarQuadradoMarcavel(false, (marcado) => {
+            ocultarVistos = marcado;
+            atualizarLista();
+        });
+        const labelOcultarVistos = document.createElement("span");
+        labelOcultarVistos.style.color = "#8b92a3";
+        labelOcultarVistos.textContent = "Ocultar as ja marcadas como vistas";
+        blocoOcultarVistos.appendChild(checkboxOcultarVistos.elemento);
+        blocoOcultarVistos.appendChild(labelOcultarVistos);
+        corpo.appendChild(blocoOcultarVistos);
 
         // Indicador de carregamento SEPARADO da lista - desde que
         // atualizarLista() parou de esvaziar "lista" durante o
@@ -1484,9 +1612,26 @@
                 lista.innerHTML = '<div style="color:#8b92a3;">Nenhuma mensagem encontrada com esse filtro.</div>';
                 return;
             }
+            // Filtro de exibicao, nao de dados - "Mostrar mais" (logo
+            // abaixo) continua olhando mensagens.length (antes do filtro),
+            // pra saber se tem mais resultado la na frente mesmo que tudo
+            // que coube nesta pagina ja tenha sido visto.
+            const visiveis = ocultarVistos ? mensagens.filter((m) => !m.visto) : mensagens;
+            if (!visiveis.length) {
+                lista.innerHTML =
+                    '<div style="color:#8b92a3;">Todas as mensagens desse filtro ja foram marcadas como vistas.</div>';
+                if (mensagens.length >= limiteAtual) {
+                    const botaoMais = botaoAcao(lista, "Mostrar mais");
+                    botaoMais.addEventListener("click", async () => {
+                        limiteAtual += 50;
+                        await atualizarLista();
+                    });
+                }
+                return;
+            }
 
             const novoConteudo = document.createDocumentFragment();
-            for (const m of mensagens) {
+            for (const m of visiveis) {
                 const item = document.createElement("div");
                 item.style.cssText =
                     "padding:8px 0;border-bottom:1px solid #2a2f3a;display:flex;gap:8px;align-items:flex-start;" +
@@ -1562,11 +1707,15 @@
     // ---- Tela de busca por palavra-chave ----
 
     async function telaBusca() {
+        definirTituloTela("Buscar mensagens");
         const corpo = corpoDoPainel();
         botaoVoltar(corpo);
 
         const db = await abrirBanco();
-        const chats = await listarChats(db);
+        // Grupo desmarcado em "Configurar grupos" nao aparece no seletor -
+        // ver comentario em renderizarTabelaChats().
+        const excluidos = carregarGruposExcluidos();
+        const chats = (await listarChats(db)).filter((c) => !excluidos.has(c.chatId));
         chats.sort((a, b) => (a.chatTitle || "").localeCompare(b.chatTitle || ""));
 
         const aviso = document.createElement("div");
@@ -1613,6 +1762,7 @@
         const inputDataAte = filtrosData.querySelector("#trp-busca-data-ate");
 
         const campoBusca = campoTexto(corpo, "Palavra ou trecho a buscar", "text");
+        const historicoBusca = ligarHistoricoBusca(campoBusca, CHAVE_HISTORICO_BUSCA_LOCAL);
 
         // Busca hibrida: alem do nosso banco local (substring, OU logico
         // entre as palavras), tambem pergunta ao vivo pro SERVIDOR do
@@ -1630,11 +1780,32 @@
         const checkboxServidor = criarQuadradoMarcavel(false, null);
         const labelServidor = document.createElement("span");
         labelServidor.style.color = "#8b92a3";
-        labelServidor.textContent =
-            "Tambem buscar ao vivo no servidor do Telegram (pega mensagem que o scan local ainda nao tem - precisa de um grupo especifico selecionado, nao funciona com \"Todos os grupos\")";
+        labelServidor.textContent = "Tambem buscar ao vivo no servidor do Telegram";
         blocoServidor.appendChild(checkboxServidor.elemento);
         blocoServidor.appendChild(labelServidor);
+        blocoServidor.insertAdjacentHTML(
+            "beforeend",
+            criarIconeInfoHtml(
+                'Pega mensagem que o scan local ainda nao tem. Precisa de um grupo especifico selecionado - nao funciona com "Todos os grupos" (faria uma chamada por grupo escaneado, arriscando bloqueio temporario por excesso de pedidos).'
+            )
+        );
         corpo.appendChild(blocoServidor);
+
+        // Oculta (so na exibicao) as mensagens ja marcadas como vista -
+        // mesmo recurso de "Ver top reacoes", ver comentario la.
+        let ocultarVistos = false;
+        const blocoOcultarVistos = document.createElement("div");
+        blocoOcultarVistos.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12px;";
+        const checkboxOcultarVistos = criarQuadradoMarcavel(false, (marcado) => {
+            ocultarVistos = marcado;
+            if (campoBusca.value.trim()) executarBusca();
+        });
+        const labelOcultarVistos = document.createElement("span");
+        labelOcultarVistos.style.color = "#8b92a3";
+        labelOcultarVistos.textContent = "Ocultar as ja marcadas como vistas";
+        blocoOcultarVistos.appendChild(checkboxOcultarVistos.elemento);
+        blocoOcultarVistos.appendChild(labelOcultarVistos);
+        corpo.appendChild(blocoOcultarVistos);
 
         // So funciona com um grupo especifico - com "Todos os grupos" a
         // caixa fica visivelmente desabilitada (nao so um aviso em texto que
@@ -1779,6 +1950,7 @@
                 lista.innerHTML = '<div style="color:#8b92a3;">Buscando...</div>';
             }
             statusCarregando.textContent = "Buscando...";
+            historicoBusca.registrar(termo);
             try {
                 await executarBuscaPorDentro();
             } finally {
@@ -1843,6 +2015,22 @@
                     : '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>';
                 return;
             }
+            // Filtro de exibicao (ocultarVistos), nao de dados - "Mostrar
+            // mais" continua olhando mensagens.length (antes desse
+            // filtro), ver mesmo comentario em telaResultados().
+            const visiveis = ocultarVistos ? todasAsMensagens.filter((m) => !m.visto) : todasAsMensagens;
+            if (!visiveis.length) {
+                lista.innerHTML =
+                    '<div style="color:#8b92a3;">Todas as mensagens encontradas ja foram marcadas como vistas.</div>';
+                if (mensagens.length >= limiteAtual) {
+                    const botaoMais = botaoAcao(lista, "Mostrar mais");
+                    botaoMais.addEventListener("click", async () => {
+                        limiteAtual += 100;
+                        await executarBusca();
+                    });
+                }
+                return;
+            }
             // Monta tudo num fragmento fora da tela primeiro, e so troca o
             // conteudo real da lista no final, de uma vez (sem await no
             // meio). Antes disso aqui fazia lista.innerHTML = "" e ia
@@ -1871,9 +2059,9 @@
                 novoConteudo.appendChild(aviso);
             }
 
-            const maisDeUmGrupo = !chatId && todasAsMensagens.some((m) => m.chatId !== todasAsMensagens[0].chatId);
+            const maisDeUmGrupo = !chatId && visiveis.some((m) => m.chatId !== visiveis[0].chatId);
             if (maisDeUmGrupo) {
-                for (const grupo of agruparPorChat(todasAsMensagens)) {
+                for (const grupo of agruparPorChat(visiveis)) {
                     const { cabecalho, seta } = criarCabecalhoGrupo(grupo.chatTitle, grupo.itens.length);
                     const containerItens = document.createElement("div");
                     cabecalho.addEventListener("click", () => {
@@ -1886,7 +2074,7 @@
                     for (const m of grupo.itens) containerItens.appendChild(criarItemResultado(m));
                 }
             } else {
-                for (const m of todasAsMensagens) novoConteudo.appendChild(criarItemResultado(m));
+                for (const m of visiveis) novoConteudo.appendChild(criarItemResultado(m));
             }
 
             lista.innerHTML = "";
@@ -1946,13 +2134,17 @@
     // - e so mais uma chamada na mesma conexao, da pra abrir essa tela com o
     // scan rodando em segundo plano sem nenhum problema.
     async function telaBuscaAvancada() {
+        definirTituloTela("Busca avancada");
         const corpo = corpoDoPainel();
         botaoVoltar(corpo);
 
         const aviso = document.createElement("div");
-        aviso.style.cssText = "color:#8b92a3;margin-bottom:10px;";
-        aviso.textContent =
-            'Busca GLOBAL do proprio Telegram em canais/supergrupos que tem (ou tiveram) um @usuario PUBLICO, mesmo que essa conta nao participe deles - "publico" aqui e so isso, nao tem nada a ver com o grupo exigir aprovacao pra alguem entrar: um grupo pode pedir aprovacao de novo membro e mesmo assim aparecer aqui, porque ler/buscar nao exige ser membro, so mandar mensagem exige. Grupo sem @usuario nenhum (so com link de convite) nunca aparece aqui - precisaria ter entrado nele pra alcancar o conteudo (ver tela de "Buscar mensagens"). Segundo o proprio blog do Telegram (ago/2025), esse recurso "e inicialmente disponivel so pra contas Premium" - a documentacao oficial do metodo (core.telegram.org/method/channels.searchPosts) descreve a cota diaria gratis e o pagamento em Stars como algo que vale so pra "full text post searches (query)", sem mencionar nada parecido pra busca por hashtag; bate com o que foi testado aqui (busca por HASHTAG funcionou sem Premium, por TEXTO LIVRE deu erro de conta Premium exigida).';
+        aviso.style.cssText = "display:flex;align-items:center;gap:4px;color:#8b92a3;margin-bottom:10px;";
+        aviso.innerHTML =
+            '<span>Busca GLOBAL em canais/grupos com (ou que ja tiveram) @usuario publico, mesmo sem a conta participar.</span>' +
+            criarIconeInfoHtml(
+                '"Publico" aqui e so isso, nao tem nada a ver com o grupo exigir aprovacao pra alguem entrar: um grupo pode pedir aprovacao de novo membro e mesmo assim aparecer aqui, porque ler/buscar nao exige ser membro, so mandar mensagem exige. Grupo sem @usuario nenhum (so com link de convite) nunca aparece aqui - precisaria ter entrado nele pra alcancar o conteudo (ver tela de "Buscar mensagens"). Segundo o proprio blog do Telegram (ago/2025), esse recurso "e inicialmente disponivel so pra contas Premium" - a documentacao oficial do metodo (core.telegram.org/method/channels.searchPosts) descreve a cota diaria gratis e o pagamento em Stars como algo que vale so pra "full text post searches (query)", sem mencionar nada parecido pra busca por hashtag; bate com o que foi testado aqui (busca por HASHTAG funcionou sem Premium, por TEXTO LIVRE deu erro de conta Premium exigida).'
+            );
         corpo.appendChild(aviso);
 
         const statusCota = document.createElement("div");
@@ -1995,13 +2187,19 @@
         blocoLinks.style.cssText = "display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;font-size:12px;";
         const checkboxLinks = criarQuadradoMarcavel(false, null);
         const labelLinks = document.createElement("span");
-        labelLinks.textContent =
-            "Tambem extrair e verificar link de grupo/canal (t.me/...) mencionado no texto dos resultados - mais lento, uma checagem por link novo";
+        labelLinks.textContent = "Tambem extrair e verificar link de grupo/canal nos resultados";
         blocoLinks.appendChild(checkboxLinks.elemento);
         blocoLinks.appendChild(labelLinks);
+        blocoLinks.insertAdjacentHTML(
+            "beforeend",
+            criarIconeInfoHtml(
+                "Extrai link t.me/... mencionado no texto de cada mensagem encontrada e confere se ainda e valido - mais lento, uma checagem de API por link novo."
+            )
+        );
         corpo.appendChild(blocoLinks);
 
         const campoBusca = campoTexto(corpo, "Palavra-chave (texto livre) ou hashtag", "text");
+        const historicoBuscaGlobal = ligarHistoricoBusca(campoBusca, CHAVE_HISTORICO_BUSCA_GLOBAL);
         const botaoBuscar = botaoAcao(corpo, "Buscar globalmente");
 
         const lista = document.createElement("div");
@@ -2073,6 +2271,13 @@
             const titulo = (chat && chat.title) || "Canal/grupo desconhecido";
             const username = chat && chat.username ? "@" + chat.username : null;
             const tipo = chat && chat.megagroup ? "grupo" : "canal";
+            // A propria mensagem que o Telegram devolve aqui ja traz o campo
+            // nativo "reactions" (o mesmo que o scan le em extrairReacoes()),
+            // estruturado - nao e preciso "adivinhar" numero de reacao lendo
+            // o TEXTO da mensagem (ideia que foi cogitada, mas desnecessaria:
+            // o dado certo ja vem pronto, sem risco de confundir com um
+            // numero qualquer digitado no texto, tipo um preco).
+            const { total: totalReacoes } = extrairReacoes(m);
 
             const item = document.createElement("div");
             item.style.cssText = "padding:8px 0;border-bottom:1px solid #2a2f3a;";
@@ -2083,6 +2288,9 @@
                 tipo +
                 ")</div>" +
                 (username ? '<div style="color:#8b92a3;font-size:11px;">' + escapeHtml(username) + "</div>" : "") +
+                (totalReacoes
+                    ? '<div style="color:#8b92a3;font-size:11px;">' + totalReacoes + " reacoes</div>"
+                    : "") +
                 "<div>" +
                 escapeHtml(truncar((m.message || "").trim(), 200)) +
                 "</div>";
@@ -2107,6 +2315,7 @@
             if (!continuar) {
                 lista.innerHTML = '<div style="color:#8b92a3;">Buscando nos canais/grupos publicos do Telegram...</div>';
                 proximaPagina = { offsetRate: 0, offsetPeer: new Api.InputPeerEmpty({}), offsetId: 0 };
+                historicoBuscaGlobal.registrar(termo);
             }
             botaoBuscar.disabled = true;
             try {
@@ -2205,6 +2414,7 @@
     // mas ainda nao foi escaneada) ou outra coisa (texto editado depois,
     // mensagem apagada, etc.).
     async function telaVerificarMensagem() {
+        definirTituloTela("Verificar mensagem");
         const corpo = corpoDoPainel();
         botaoVoltar(corpo);
 

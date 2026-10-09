@@ -1266,3 +1266,79 @@ cortado dentro do proprio select quando selecionada - troca aceitavel
 por garantir que os outros filtros sempre apareçam.
 
 Versao 2026.10.08.13.
+
+## v2026.10.08.14: ocultar vistos, titulo da tela no cabecalho, grupo desmarcado some das listas, avisos viram icone "i", historico de busca, reacao nativa na Busca avancada
+
+Lote grande de ajustes de UX, nenhum deles mexe no que e salvo no banco -
+so em como e exibido/organizado:
+
+**1. Ocultar mensagens ja vistas.** Checkbox novo em "Ver top reacoes" e
+"Buscar mensagens" ("Ocultar as ja marcadas como vistas") - filtra so a
+EXIBICAO (a mensagem continua no banco, com `visto:true`), em cima do
+que ja foi buscado. O calculo de "Mostrar mais" continua olhando a
+quantidade ANTES desse filtro (`mensagens.length`), senao a pessoa
+nunca saberia se tem mais coisa pra carregar so porque a pagina atual
+ficou vazia de visiveis.
+
+**2. Titulo da tela no cabecalho.** Antes o cabecalho sempre mostrava
+so "Top Reacoes", em qualquer tela - sem olhar o corpo do painel, nao
+dava pra saber onde se estava (por exemplo depois de rolar pro topo).
+`definirTituloTela(nome)`, chamada no inicio de cada tela, troca pra
+"Top Reacoes - <nome da tela>"; `telaLogado()` (o menu) chama com
+`null`, que volta a mostrar so o nome do app.
+
+**3. Grupo desmarcado em "Configurar grupos" some das listas.** Antes,
+desmarcar um grupo so afetava o proximo scan com "Todos" selecionado -
+ele continuava aparecendo no seletor de grupo de "Ver top reacoes" e
+"Buscar mensagens", e na tabela "O que ja esta salvo" da tela de scan,
+mesmo sem mais interesse nele. Agora esses tres lugares filtram pelo
+mesmo `carregarGruposExcluidos()` que ja existia - volta a aparecer se
+a pessoa marcar o grupo de novo em "Configurar grupos". O seletor da
+PROPRIA tela de scan (pra escolher um grupo especifico) continua
+mostrando todos, de proposito - esse ja ignorava a lista de exclusao
+antes (serve pra escanear algo pontual mesmo fora do "Todos").
+
+**4. Avisos longos viram um icone "i" com tooltip.** Os paragrafos
+grandes fixos (explicacao da Busca avancada, do checkbox de busca ao
+vivo no servidor, do checkbox de extrair link de grupo, de "Configurar
+grupos") poluiam a tela. Virou um texto curto + um pequeno "i"
+(`criarIconeInfoHtml()`, span com `title` - tooltip nativo do
+navegador, sem componente customizado) com a explicacao completa
+disponivel ao passar o mouse por cima. Nao mexi no texto de status do
+scan (`telaScanner`) - esse e dinamico (vira "Escaneando..." durante o
+scan), nao so informativo.
+
+**5. Tabela de status do scan mais larga.** Cabecalhos como "Status" e
+"Ultimo scan" quebravam em 2 linhas porque a coluna ficava espremida
+pela coluna "Grupo". `white-space:nowrap` nos `<th>` e painel 40px mais
+largo (420px -> 460px) resolvem.
+
+**6. Menu reorganizado: "Configurar grupos" por ultimo.** E um item de
+configuracao, nao uma ferramenta de uso diario como as outras - pedido
+do usuario pra ir pro fim da lista (cor de fundo mais discreta tambem,
+pra reforcar visualmente que e diferente das demais).
+
+**7. Historico de busca (autocomplete nativo).** Os campos de busca de
+"Buscar mensagens" e "Busca avancada" agora ligam num `<datalist>`
+(`ligarHistoricoBusca()`) com os ultimos 20 termos buscados,
+persistidos via `GM_setValue`/`GM_getValue` entre sessoes - o proprio
+navegador mostra isso como sugestao ao digitar, sem nenhum componente
+customizado. "Capricho" pedido pelo usuario, simples de fazer com HTML
+puro.
+
+**8. Contagem de reacao nativa nos resultados da Busca avancada.** O
+usuario cogitou (como ideia aberta, "pode ser totalmente descartavel")
+tentar adivinhar quantidade de reacao analisando NUMEROS soltos no
+texto das mensagens encontradas pela busca global - com o problema
+obvio de falso positivo (um preco "125 BRL" no meio do texto, por
+exemplo). Isso acabou sendo desnecessario: toda mensagem que
+`channels.SearchPosts` devolve e um objeto `Message` completo do
+Telegram, que ja inclui o campo nativo `reactions` (o MESMO campo
+estruturado que `extrairReacoes()` ja le em qualquer outro lugar do
+app, scan incluido) quando a mensagem tem reacao - nao e preciso (nem
+seria confiavel) procurar numero no texto. Cada resultado da Busca
+avancada agora mostra "N reacoes" quando esse campo vem preenchido,
+sem nenhuma chamada de API extra (o dado ja vem dentro da resposta da
+propria busca).
+
+Versao 2026.10.08.14.
