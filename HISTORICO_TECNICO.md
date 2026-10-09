@@ -1546,3 +1546,51 @@ Tambem aumentada a largura do painel de 460px para 510px (+~11%), a pedido
 do usuario (ainda tinha conteudo cortado mesmo depois do aumento da v12).
 
 Versao 2026.10.09.18.
+
+## v2026.10.09.19: causa provavel do bug do grupo excluido achada (grupo arquivado/orfao nunca aparecia em Configurar grupos), historico de buscas gerenciavel, painel +15%
+
+Usuario insistiu que a exclusao de grupo continuava sem efeito em "todo o
+projeto", mesmo depois de duas auditorias (v16, v18) que confirmaram o
+codigo de filtragem correto em todo lugar. Reexaminando o problema por outro
+angulo - o que faz um grupo ja escaneado parar de aparecer na propria tela
+"Configurar grupos" (onde a exclusao e marcada) - achei duas causas reais:
+
+1. `carregarGruposParaSelecao()`, `encontrarEntidadePorChatId()` e
+   `buscarUltimaMensagemPorChat()` chamavam `cliente.iterDialogs({})` sem
+   nenhum parametro - isso so devolve a pasta PRINCIPAL de conversas do
+   Telegram. Um grupo arquivado (pasta "Arquivados") nunca entra nessa
+   lista. Resultado: se o usuario arquiva um grupo depois de ja te-lo
+   escaneado, esse grupo some de "Configurar grupos" (nao da mais pra
+   marcar/desmarcar ele) mas os dados dele continuam aparecendo pra sempre
+   nas outras telas, que leem direto do IndexedDB sem ligar pra pasta atual.
+2. Grupo que o usuario SAIU, ou grupo comum que foi promovido a supergrupo
+   (o Telegram troca o chatId nessa promocao) tambem nunca aparece em
+   `carregarGruposParaSelecao()` (que so ve a conta HOJE), pelo mesmo motivo.
+
+Corrigido: nova funcao `iterTodosOsDialogs()` (gerador que junta a pasta
+principal com a pasta "Arquivados") substituiu `cliente.iterDialogs({})` em
+toda funcao que precisa enumerar "todos os grupos/canais da conta" (scan,
+selecao, ultima mensagem). "Configurar grupos" tambem ganhou uma
+reconciliacao: qualquer chatId que esteja salvo no IndexedDB (ja escaneado
+antes) mas que nao apareca mais em nenhuma pasta da conta agora entra na
+lista mesmo assim, marcado "(nao esta mais na sua lista de conversas - saiu
+do grupo ou ele mudou de id)" - cobre o caso 2, que nenhuma chamada de API
+sozinha resolve (o chatId antigo simplesmente nao existe mais pra consultar).
+
+Isso nao e garantia de que FOI essa a causa exata do caso do usuario (nao
+da pra confirmar sem saber se o grupo dele estava arquivado ou foi
+promovido a supergrupo), mas cobre os dois jeitos reais, ja identificados no
+schema/biblioteca, de um grupo escaneado ficar "preso" fora do alcance da
+tela de exclusao - o que bate com o sintoma relatado ("nao esta em lugar
+nenhum pra eu desmarcar, mas continua aparecendo").
+
+Tambem nessa versao:
+- Historico de buscas (autocompletar de "Buscar mensagens" e "Busca
+  avancada") agora tem tela propria ("Historico de buscas") pra tirar um
+  termo especifico (botao "x" por item) ou limpar tudo de uma lista -
+  antes so dava pra limpar tudo de uma vez, apagando o storage por fora do
+  app.
+- Largura do painel aumentada de 510px para 590px (+15%), a pedido do
+  usuario (badge "completo" da tabela de status ainda quebrava em 2 linhas).
+
+Versao 2026.10.09.19.

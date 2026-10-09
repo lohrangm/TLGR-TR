@@ -59,6 +59,15 @@
         GM_setValue(chave, JSON.stringify(historico.slice(0, 20)));
     }
 
+    // Tira um termo especifico do historico (pedido do usuario: as vezes um
+    // termo digitado errado, ou que nao interessa mais, fica poluindo o
+    // autocompletar pra sempre - sem isso so dava pra limpar tudo de uma vez,
+    // nunca um item so). Ver telaHistoricoBusca().
+    function removerTermoDoHistorico(chave, termo) {
+        const historico = carregarHistoricoBusca(chave).filter((t) => t !== termo);
+        GM_setValue(chave, JSON.stringify(historico));
+    }
+
     // Liga um <input> de busca a um <datalist> com o historico de termos ja
     // buscados antes (persistido entre sessoes via GM_getValue/GM_setValue) -
     // o proprio navegador mostra isso como sugestao/preenchimento automatico
@@ -542,7 +551,7 @@
             position: "fixed",
             top: "40px",
             right: "24px",
-            width: "510px",
+            width: "590px",
             maxHeight: "80vh",
             overflow: "hidden",
             display: "flex",
@@ -1024,6 +1033,9 @@
             const botaoConfigurarGrupos = botaoAcao(corpo, "Configurar grupos do scan (incluir/excluir)");
             botaoConfigurarGrupos.style.background = "#2a2f3a";
             botaoConfigurarGrupos.addEventListener("click", () => telaConfigurarGrupos());
+            const botaoHistorico = botaoAcao(corpo, "Historico de buscas (gerenciar/limpar)");
+            botaoHistorico.style.background = "#2a2f3a";
+            botaoHistorico.addEventListener("click", () => telaHistoricoBusca());
             atualizarVisibilidadeSair(true);
         } catch (erro) {
             textoAviso(corpo, "Erro ao carregar a conta: " + (erro && erro.message ? erro.message : erro), "#ff6b6b");
@@ -1047,12 +1059,27 @@
 
     // ---- Tela de scan ----
 
+    // Itera TODOS os grupos/canais da conta, incluindo os que estao na
+    // pasta "Arquivados" do Telegram - cliente.iterDialogs({}) sozinho so
+    // devolve a pasta principal. Sem isso, um grupo que foi arquivado DEPOIS
+    // de ja ter sido escaneado nunca mais aparece em "Configurar grupos" pra
+    // poder ser excluido - ele fica preso pra sempre nas listas de
+    // status/busca (que leem direto do que ja foi salvo no IndexedDB, sem
+    // ligar se o grupo ainda esta na pasta principal) sem nenhum jeito de
+    // tirar ele de la pela tela de configuracao. Toda funcao que precisa
+    // enumerar "todos os grupos/canais da conta" usa essa, nunca
+    // cliente.iterDialogs({}) direto.
+    async function* iterTodosOsDialogs() {
+        yield* cliente.iterDialogs({});
+        yield* cliente.iterDialogs({ archived: true });
+    }
+
     // Lista os grupos/canais da conta (pra popular o seletor de "qual grupo
     // escanear"). Separado de escanearTudo porque aqui so queremos
     // id+titulo, sem mexer no banco.
     async function carregarGruposParaSelecao() {
         const grupos = [];
-        for await (const dialog of cliente.iterDialogs({})) {
+        for await (const dialog of iterTodosOsDialogs()) {
             if (!(dialog.isGroup || dialog.isChannel)) continue;
             grupos.push({ chatId: String(dialog.id), titulo: dialog.title || dialog.name || String(dialog.id) });
         }
@@ -1066,7 +1093,11 @@
     // de busca e tambem do dropdown "Grupo/canal a escanear" da tela de
     // scan) ate ser marcado de novo - um unico comportamento consistente em
     // vez de excecao por tela. Pra escanear um grupo excluido manualmente,
-    // marca ele aqui de novo primeiro.
+    // marca ele aqui de novo primeiro. A lista inclui grupos arquivados (ver
+    // iterTodosOsDialogs) e tambem grupos que o usuario ja saiu / mudaram de
+    // id (ver reconciliacao com listarChats(db) dentro da funcao) - sem isso
+    // esses dois casos nunca apareciam aqui pra poder ser excluidos, mesmo
+    // com dados ja escaneados deles poluindo as outras telas pra sempre.
     async function telaConfigurarGrupos() {
         definirTituloTela("Configurar grupos");
         const corpo = corpoDoPainel();
@@ -1089,29 +1120,129 @@
         try {
             const grupos = await carregarGruposParaSelecao();
             const excluidos = carregarGruposExcluidos();
+
+            // Reconciliacao com o que ja foi escaneado: um grupo que o
+            // usuario SAIU, ou que mudou de chatId (grupo comum virou
+            // supergrupo - Telegram troca o id nessa migracao), nao aparece
+            // em carregarGruposParaSelecao() (que so ve a conta HOJE) mas os
+            // dados escaneados dele continuam no IndexedDB pra sempre, e sem
+            // aparecer aqui o usuario nunca consegue marcar ele como
+            // excluido. Mostra esses tambem, separados, com o titulo salvo
+            // na epoca do scan.
+            const idsAtuais = new Set(grupos.map((g) => g.chatId));
+            const db = await abrirBanco();
+            const chatsSalvos = await listarChats(db);
+            const orfaos = chatsSalvos.filter((c) => !idsAtuais.has(c.chatId));
+
             lista.innerHTML = "";
-            if (!grupos.length) {
+            if (!grupos.length && !orfaos.length) {
                 lista.textContent = "Nenhum grupo/canal encontrado nessa conta.";
                 return;
             }
-            for (const g of grupos) {
+
+            const criarLinha = (chatId, titulo, origemDesconhecida) => {
                 const linha = document.createElement("div");
                 linha.style.cssText =
                     "display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid #2a2f3a;";
-                const quadrado = criarQuadradoMarcavel(!excluidos.has(g.chatId), (incluido) => {
-                    if (incluido) excluidos.delete(g.chatId);
-                    else excluidos.add(g.chatId);
+                const quadrado = criarQuadradoMarcavel(!excluidos.has(chatId), (incluido) => {
+                    if (incluido) excluidos.delete(chatId);
+                    else excluidos.add(chatId);
                     salvarGruposExcluidos(excluidos);
                 });
                 const rotulo = document.createElement("span");
-                rotulo.textContent = g.titulo;
+                rotulo.textContent = titulo;
                 linha.appendChild(quadrado.elemento);
                 linha.appendChild(rotulo);
+                if (origemDesconhecida) {
+                    const nota = document.createElement("span");
+                    nota.style.cssText = "color:#8b92a3;font-size:11px;margin-left:4px;";
+                    nota.textContent = "(nao esta mais na sua lista de conversas - saiu do grupo ou ele mudou de id)";
+                    linha.appendChild(nota);
+                }
                 lista.appendChild(linha);
-            }
+            };
+
+            for (const g of grupos) criarLinha(g.chatId, g.titulo, false);
+            for (const c of orfaos) criarLinha(c.chatId, c.chatTitle || c.chatId, true);
         } catch (erro) {
             lista.textContent = "Erro ao carregar grupos: " + (erro && erro.message ? erro.message : erro);
         }
+    }
+
+    // ---- Tela de configuracao: historico de termos pesquisados ----
+
+    // So dava pra limpar o historico todo de uma vez (apagando o
+    // GM_setValue direto no storage do Tampermonkey) - pedido do usuario:
+    // poder tirar so um termo especifico da lista de sugestao, sem perder o
+    // resto. Dois historicos separados (busca local "Buscar mensagens" e
+    // busca global "Busca avancada"), cada um com seu botao de limpar tudo.
+    function telaHistoricoBusca() {
+        definirTituloTela("Historico de buscas");
+        const corpo = corpoDoPainel();
+        botaoVoltar(corpo);
+
+        const renderizarBloco = (titulo, chave) => {
+            const secao = document.createElement("div");
+            secao.style.marginBottom = "16px";
+
+            const cabecalho = document.createElement("div");
+            cabecalho.style.cssText = "display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;";
+            const rotulo = document.createElement("span");
+            rotulo.style.cssText = "color:#8b92a3;font-weight:600;";
+            rotulo.textContent = titulo;
+            cabecalho.appendChild(rotulo);
+
+            const botaoLimparTudo = document.createElement("button");
+            botaoLimparTudo.textContent = "Limpar tudo";
+            botaoLimparTudo.style.cssText =
+                "background:none;border:1px solid #2a2f3a;border-radius:6px;color:#ff6b6b;cursor:pointer;" +
+                "font-size:11px;padding:3px 8px;";
+            cabecalho.appendChild(botaoLimparTudo);
+            secao.appendChild(cabecalho);
+
+            const lista = document.createElement("div");
+            secao.appendChild(lista);
+            corpo.appendChild(secao);
+
+            const renderizarLista = () => {
+                const termos = carregarHistoricoBusca(chave);
+                lista.innerHTML = "";
+                if (!termos.length) {
+                    lista.innerHTML = '<div style="color:#8b92a3;font-size:12px;">Nenhum termo buscado ainda.</div>';
+                    return;
+                }
+                for (const termo of termos) {
+                    const linha = document.createElement("div");
+                    linha.style.cssText =
+                        "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 0;" +
+                        "border-bottom:1px solid #2a2f3a;";
+                    const texto = document.createElement("span");
+                    texto.style.cssText = "overflow-wrap:anywhere;";
+                    texto.textContent = termo;
+                    const botaoRemover = document.createElement("button");
+                    botaoRemover.textContent = "✕";
+                    botaoRemover.title = "Tirar esse termo do historico";
+                    botaoRemover.style.cssText =
+                        "background:none;border:none;color:#8b92a3;cursor:pointer;font-size:13px;flex-shrink:0;";
+                    botaoRemover.addEventListener("click", () => {
+                        removerTermoDoHistorico(chave, termo);
+                        renderizarLista();
+                    });
+                    linha.appendChild(texto);
+                    linha.appendChild(botaoRemover);
+                    lista.appendChild(linha);
+                }
+            };
+            renderizarLista();
+
+            botaoLimparTudo.addEventListener("click", () => {
+                GM_setValue(chave, "[]");
+                renderizarLista();
+            });
+        };
+
+        renderizarBloco('Historico de "Buscar mensagens"', CHAVE_HISTORICO_BUSCA_LOCAL);
+        renderizarBloco('Historico de "Busca avancada"', CHAVE_HISTORICO_BUSCA_GLOBAL);
     }
 
     // Acha o dialog.entity de um chat ja escaneado, pelo chatId guardado -
@@ -1120,7 +1251,7 @@
     // dialog.entity pra chamar iterMessages. So itera os dialogs ate achar
     // (nao da pra montar o InputPeer so com o chatId sem o access_hash).
     async function encontrarEntidadePorChatId(chatId) {
-        for await (const dialog of cliente.iterDialogs({})) {
+        for await (const dialog of iterTodosOsDialogs()) {
             if (String(dialog.id) === chatId) return dialog.entity;
         }
         return null;
@@ -1137,7 +1268,7 @@
     // verdade.
     async function buscarUltimaMensagemPorChat() {
         const mapa = new Map();
-        for await (const dialog of cliente.iterDialogs({})) {
+        for await (const dialog of iterTodosOsDialogs()) {
             if (!(dialog.isGroup || dialog.isChannel)) continue;
             mapa.set(String(dialog.id), dialog.message ? dialog.message.id : null);
         }
@@ -1371,7 +1502,7 @@
         // esteja desmarcado em "Configurar grupos do scan".
         const excluidos = apenasChatId ? null : carregarGruposExcluidos();
         try {
-            for await (const dialog of cliente.iterDialogs({})) {
+            for await (const dialog of iterTodosOsDialogs()) {
                 if (cancelarScanSolicitado) break;
                 if (!(dialog.isGroup || dialog.isChannel)) continue;
 
