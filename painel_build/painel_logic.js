@@ -330,7 +330,17 @@
 
             pedido.onsuccess = () => {
                 const cursor = pedido.result;
-                if (!cursor || resultados.length >= limite || visitados >= LIMITE_VISITAS) {
+                // So para quando o cursor acaba ou bate a trava de seguranca
+                // - NUNCA so por ja ter "limite" resultados. Se parasse ali,
+                // "ordenarPor" (reacoes OU data) so reordenaria o primeiro
+                // punhado de mensagens que bateram com o termo (as mais
+                // antigas do chat, ja que o indice por_chat visita em ordem
+                // crescente de messageId) e nunca enxergaria o resto do
+                // historico - foi o bug que deixava "mais reacoes" devolver
+                // numero baixo/errado com um termo muito comum (ex.: uma
+                // letra sozinha) num chat grande. Mesmo espirito/custo do
+                // full-scan que buscarTopPorData() ja faz.
+                if (!cursor || visitados >= LIMITE_VISITAS) {
                     if (ordenarPor === "reacoes") {
                         resultados.sort((a, b) => (b.reactionTotal || 0) - (a.reactionTotal || 0));
                     } else {
@@ -1837,11 +1847,12 @@
         const lista = document.createElement("div");
         corpo.appendChild(lista);
 
-        // Cresce com "Mostrar mais" - comeca em 100. Com "Todos os grupos" e
-        // uma palavra comum, o primeiro grupo (na ordem da chave primaria)
-        // pode sozinho preencher esse limite e esconder os outros grupos -
-        // "Mostrar mais" e o jeito de passar por ele e alcancar os demais
-        // (ver nota em cima de buscarTexto()).
+        // Cresce com "Mostrar mais" - comeca em 100. buscarTexto() ja
+        // devolve o conjunto inteiro de resultados ordenado (por reacoes ou
+        // data) antes de cortar pro limite atual, entao "Mostrar mais" so
+        // revela mais itens mais abaixo nessa lista ja ordenada - nao existe
+        // mais risco de um grupo sozinho "engolir" o limite e esconder os
+        // demais (ver nota em cima de buscarTexto()).
         let limiteAtual = 100;
 
         function criarItemResultado(m) {

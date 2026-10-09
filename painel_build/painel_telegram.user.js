@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.08.14
+// @version      2026.10.09.15
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -169484,7 +169484,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.08.14";
+window.TRP_VERSAO = "2026.10.09.15";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
@@ -169820,7 +169820,17 @@ window.TRP_VERSAO = "2026.10.08.14";
 
             pedido.onsuccess = () => {
                 const cursor = pedido.result;
-                if (!cursor || resultados.length >= limite || visitados >= LIMITE_VISITAS) {
+                // So para quando o cursor acaba ou bate a trava de seguranca
+                // - NUNCA so por ja ter "limite" resultados. Se parasse ali,
+                // "ordenarPor" (reacoes OU data) so reordenaria o primeiro
+                // punhado de mensagens que bateram com o termo (as mais
+                // antigas do chat, ja que o indice por_chat visita em ordem
+                // crescente de messageId) e nunca enxergaria o resto do
+                // historico - foi o bug que deixava "mais reacoes" devolver
+                // numero baixo/errado com um termo muito comum (ex.: uma
+                // letra sozinha) num chat grande. Mesmo espirito/custo do
+                // full-scan que buscarTopPorData() ja faz.
+                if (!cursor || visitados >= LIMITE_VISITAS) {
                     if (ordenarPor === "reacoes") {
                         resultados.sort((a, b) => (b.reactionTotal || 0) - (a.reactionTotal || 0));
                     } else {
@@ -171327,11 +171337,12 @@ window.TRP_VERSAO = "2026.10.08.14";
         const lista = document.createElement("div");
         corpo.appendChild(lista);
 
-        // Cresce com "Mostrar mais" - comeca em 100. Com "Todos os grupos" e
-        // uma palavra comum, o primeiro grupo (na ordem da chave primaria)
-        // pode sozinho preencher esse limite e esconder os outros grupos -
-        // "Mostrar mais" e o jeito de passar por ele e alcancar os demais
-        // (ver nota em cima de buscarTexto()).
+        // Cresce com "Mostrar mais" - comeca em 100. buscarTexto() ja
+        // devolve o conjunto inteiro de resultados ordenado (por reacoes ou
+        // data) antes de cortar pro limite atual, entao "Mostrar mais" so
+        // revela mais itens mais abaixo nessa lista ja ordenada - nao existe
+        // mais risco de um grupo sozinho "engolir" o limite e esconder os
+        // demais (ver nota em cima de buscarTexto()).
         let limiteAtual = 100;
 
         function criarItemResultado(m) {

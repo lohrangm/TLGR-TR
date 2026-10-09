@@ -99,7 +99,11 @@ function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor, dataDe, da
 
         pedido.onsuccess = () => {
             const cursor = pedido.result;
-            if (!cursor || resultados.length >= limite || visitados >= LIMITE_VISITAS) {
+            // Mirror do fix em painel_logic.js: so para quando o cursor
+            // acaba ou bate a trava de seguranca - nunca so por ja ter
+            // "limite" resultados, senao "ordenarPor" so reordena um pedaco
+            // truncado em vez do historico todo.
+            if (!cursor || visitados >= LIMITE_VISITAS) {
                 if (ordenarPor === "reacoes") {
                     resultados.sort((a, b) => (b.reactionTotal || 0) - (a.reactionTotal || 0));
                 } else {
@@ -482,12 +486,15 @@ assert(msgA5.visto === false, "marcarVisto(false) desmarca de novo");
 await marcarVisto(db, "chave-que-nao-existe", true);
 assert(true, "marcarVisto numa chave inexistente nao quebra (so nao faz nada)");
 
-// ---- buscarTexto: "grupo comum esconde os outros" e a correcao via paginacao ----
+// ---- buscarTexto: fix do "para antes de ordenar" (early-stop-before-sort) ----
 // Grupo A (vem antes na ordem lexicografica da chave primaria) recebe 5
-// mensagens batendo com o termo; grupo Z (vem depois) recebe so 1. Com
-// limite curto, o cursor para dentro do grupo A e nunca chega no Z -
-// reproduz exatamente o bug relatado. Com limite maior (equivalente a
-// clicar "Mostrar mais"), o Z aparece.
+// mensagens batendo com o termo; grupo Z (vem depois) recebe so 1, com a
+// reacao mais alta de todas e a data mais recente. Antes do fix, um limite
+// curto fazia o cursor parar dentro do grupo A (preenchendo "limite" so com
+// matches de A) e SO DEPOIS ordenar esse pedaco truncado - o Z, que tinha a
+// reacao mais alta e a data mais recente, nunca era alcancado. Agora o
+// cursor sempre percorre tudo (ate a trava de seguranca) antes de ordenar e
+// so ENTAO corta pro limite, entao mesmo um limite curto encontra o Z.
 for (let i = 1; i <= 5; i++) {
     await salvarMensagem(db, {
         key: "A:" + (10 + i),
@@ -509,17 +516,23 @@ await salvarMensagem(db, {
     dateUtc: "2026-02-10T00:00:00Z",
 });
 
-const paginaCurta = await buscarTexto(db, { termo: "promocao", chatId: null, limite: 3, ordenarPor: "data" });
-assert(paginaCurta.length === 3, "limite curto (3) retorna so 3 resultados (veio " + paginaCurta.length + ")");
+const paginaCurtaPorData = await buscarTexto(db, { termo: "promocao", chatId: null, limite: 3, ordenarPor: "data" });
+assert(paginaCurtaPorData.length === 3, "limite curto (3) retorna so 3 resultados (veio " + paginaCurtaPorData.length + ")");
 assert(
-    paginaCurta.every((m) => m.chatId === "A"),
-    "limite curto (3) fica preso no grupo A (lexicograficamente primeiro) - reproduz o bug relatado"
+    paginaCurtaPorData[0].chatId === "Z",
+    "FIX: limite curto (3) + ordenarPor='data' ja acha o grupo Z (mais recente) na primeira pagina, nao fica mais preso no grupo A"
+);
+
+const paginaCurtaPorReacoes = await buscarTexto(db, { termo: "promocao", chatId: null, limite: 3, ordenarPor: "reacoes" });
+assert(
+    paginaCurtaPorReacoes[0].chatId === "Z" && paginaCurtaPorReacoes[0].reactionTotal === 99,
+    "FIX: limite curto (3) + ordenarPor='reacoes' ja traz a mensagem de 99 reacoes (grupo Z) em primeiro, mesmo sem 'Mostrar mais'"
 );
 
 const paginaCompleta = await buscarTexto(db, { termo: "promocao", chatId: null, limite: 10, ordenarPor: "data" });
 assert(
     paginaCompleta.some((m) => m.chatId === "Z"),
-    "limite maior (equivalente a \"Mostrar mais\") alcanca o grupo Z que ficava escondido"
+    "limite maior tambem alcanca o grupo Z"
 );
 assert(
     paginaCompleta.length === 6,
@@ -546,6 +559,49 @@ const comMinimo = await buscarTexto(db, {
 assert(
     comMinimo.length === 1 && comMinimo[0].chatId === "Z",
     "filtro minimo=50 deixa so a mensagem do grupo Z (99 reacoes)"
+);
+
+// ---- buscarTexto: reproducao exata do caso relatado - termo quase universal
+// DENTRO DE UM UNICO GRUPO, reacao alta aparecendo tarde no cursor (messageId
+// maior = mensagem mais recente nesse grupo) ----
+// Chat "Q": 5 mensagens antigas (messageId 1-5) com reacao baixa (1 a 5),
+// batendo com o termo "zz" (simula uma letra/termo quase universal), e DEPOIS
+// (messageId 6, mais recente) uma mensagem com reacao bem mais alta (80).
+// O cursor por_chat visita em ordem crescente de messageId - entao, com o
+// bug antigo, um limite de 3 parava logo nas 3 primeiras (reacao 1, 2, 3) e
+// NUNCA alcancava a de 80, reportando um maximo bem mais baixo do que o real
+// (exatamente o sintoma relatado: "mostrou um numero baixo, mas falso").
+for (let i = 1; i <= 5; i++) {
+    await salvarMensagem(db, {
+        key: "Q:" + i,
+        chatId: "Q",
+        messageId: i,
+        reactionTotal: i,
+        chatTitle: "Grupo Q",
+        texto: "zz mensagem antiga " + i,
+        dateUtc: "2026-03-0" + i + "T00:00:00Z",
+    });
+}
+await salvarMensagem(db, {
+    key: "Q:6",
+    chatId: "Q",
+    messageId: 6,
+    reactionTotal: 80,
+    chatTitle: "Grupo Q",
+    texto: "zz mensagem recente com reacao alta",
+    dateUtc: "2026-03-06T00:00:00Z",
+});
+
+const buscaLetraComum = await buscarTexto(db, { termo: "zz", chatId: "Q", limite: 3, ordenarPor: "reacoes" });
+assert(
+    buscaLetraComum.length === 3,
+    "limite=3 continua respeitando o tamanho da pagina (veio " + buscaLetraComum.length + ")"
+);
+assert(
+    buscaLetraComum[0].reactionTotal === 80,
+    "FIX: mesmo com limite curto (3) dentro de UM SO grupo, 'ordenarPor: reacoes' acha a mensagem de reacao mais alta (80), nao fica presa nas mais antigas (veio " +
+        buscaLetraComum[0].reactionTotal +
+        ")"
 );
 
 // ---- agruparPorChat - base do agrupar/maximizar-minimizar por grupo na busca ----

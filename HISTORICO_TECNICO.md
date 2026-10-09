@@ -1342,3 +1342,54 @@ sem nenhuma chamada de API extra (o dado ja vem dentro da resposta da
 propria busca).
 
 Versao 2026.10.08.14.
+
+## v2026.10.09.15: fix no bug real por tras da "gambiarra" do usuario (buscarTexto parava antes de ordenar)
+
+O usuario relatou ter tentado uma gambiarra em "Buscar mensagens": escolher
+um grupo especifico, ligar "busca ao vivo no servidor", buscar uma letra
+quase universal (ex.: "a") pra aproximar "me mostra tudo", e ordenar por
+"mais reacoes" - tentando usar essa tela pra fazer na marra o que "Ver top
+reacoes" ja faz de forma correta. Resultado: numeros inconsistentes e
+suspeitos (maximo de 29 reacoes num grupo que "sempre funciona mas fica meio
+travado"; so 1 reacao, chamado por ele de "impossivel", em outros).
+
+**Causa raiz, achada em `buscarTexto()`:** a funcao parava de percorrer o
+IndexedDB assim que `resultados.length >= limite` (padrao 100) - e SO DEPOIS
+disso ordenava por reacao ou data. Como o indice `por_chat` visita as
+mensagens de um grupo em ordem crescente de `messageId` (das mais antigas
+pras mais recentes), um termo quase universal enchia o limite quase
+imediatamente so com mensagens antigas do grupo. "Ordenar por reacoes"
+nessas condicoes so reordenava esse pedaco antigo e truncado - nunca
+alcancava uma mensagem de reacao alta que estivesse mais pra frente no
+historico. Por isso o teto artificialmente baixo (29) e os casos "impossivel"
+(1) em grupos onde o punhado antigo capturado tinha pouca reacao.
+
+Fator secundario, menor: a parte "ao vivo no servidor" (`iterMessages({
+search: termo, limit: 50 })`) e hard-capped em 50 resultados mais recentes do
+servidor - nao cobre o historico completo tambem, mas isso e inerente ao
+proposito dela (achar mensagem nova que ainda nao foi escaneada, nao
+substituir o scan completo).
+
+**Fix:** `buscarTexto()` agora so para de percorrer o cursor quando ele
+acaba ou bate a trava de seguranca (`LIMITE_VISITAS = 300000`) - nunca mais
+por ja ter "limite" resultados. Ordena o conjunto COMPLETO de mensagens que
+bateram com o termo (ate a trava) e so ENTAO corta pro limite da pagina
+atual. Mesmo padrao que `buscarTopPorData()` ja usava. Efeito colateral bom:
+o comentario antigo de "um grupo sozinho pode engolir o limite e esconder os
+demais" (motivo original do botao "Mostrar mais") tambem deixa de acontecer,
+porque a ordenacao agora enxerga todos os grupos antes de cortar.
+
+Testes novos em `test_indexeddb_logic.mjs` reproduzem o caso relatado:
+termo quase universal DENTRO DE UM SO grupo, com a mensagem de reacao alta
+aparecendo tarde no cursor (messageId maior) - antes do fix, um limite curto
+nunca alcancava essa mensagem; depois do fix, acha de primeira.
+
+**Importante pro usuario:** o fix deixa "Buscar mensagens" com "ordenarPor:
+reacoes" correto de verdade (util pra buscar reacao de uma PALAVRA especifica
+dentro das mensagens). Mas pra "ver o top de reacoes de um grupo inteiro,
+sem me importar com o texto", a ferramenta certa continua sendo "Ver top
+reacoes" direto - ela usa o indice `por_reacoes` (ja ordenado), nao depende
+de nenhum termo bater, e por isso tambem pega posts so de midia/sem texto
+com reacao alta que uma busca por palavra nunca acharia.
+
+Versao 2026.10.09.15.
