@@ -1823,3 +1823,76 @@ sobre ranquear mensagem dentro de um grupo ja escolhido, nao sobre
 descobrir qual canal tem mais membros - escopo diferente).
 
 Versao 2026.10.09.24.
+
+## v2026.10.09.25: auditoria completa pedida pelo usuario - bug real achado e corrigido na tela de Escanear, revisao linha a linha do resto do arquivo
+
+Usuario pediu explicitamente uma auditoria calma e completa do arquivo
+inteiro (nao so do que foi mexido recentemente), de forma proativa:
+achar E JA CORRIGIR problemas por conta propria, nao so reportar. Esta
+entrada documenta o que foi encontrado e corrigido nessa auditoria.
+
+### 1. telaScanner(): status/tabela congelados ao reabrir a tela de Escanear durante um scan em andamento
+
+Bug real, reproduzivel: usuario inicia um scan em "Escanear", navega pra
+outra tela do painel, e volta pra "Escanear" enquanto o scan ORIGINAL
+ainda esta rodando. A tela reaberta cria elementos novos (status, tabela,
+botoes) e mostra uma mensagem estatica "Scan ja esta rodando...", mas os
+callbacks que de fato atualizam status/tabela durante o scan continuavam
+presos (closure) nos elementos da ABERTURA ANTERIOR - ja fora do DOM,
+invisivel. Resultado: a tela visivel ficava com o texto congelado pra
+sempre, sem nenhum progresso, e nem recebia a mensagem final de "Scan
+completo" - so se resolvia navegando pra outra tela e voltando de novo
+(nesse momento scanEmAndamento ja estaria false e tudo se desenhava certo
+do zero).
+
+Correcao: camada de indirecao em nivel de modulo
+(visualizacaoScanAtiva/registrarVisualizacaoScanAtiva/notificarStatusScan/
+notificarAtualizacaoChatScan, perto do topo do arquivo) - toda abertura de
+telaScanner() se registra como "quem recebe atualizacao agora",
+substituindo a anterior. escanearTudo() (que perdeu os parametros
+atualizarStatus/aoAtualizarChat, agora recebe so apenasChatId) e o clique
+de "Iniciar scan" passam a notificar sempre quem estiver registrado no
+momento, nunca mais os elementos de quem especificamente iniciou o scan.
+
+Durante a correcao, achado e corrigido TAMBEM um segundo problema do
+mesmo tipo, mais sutil: o reset dos BOTOES ("Iniciar scan de novo", some
+o botao "Parar") ao terminar o scan ainda estava preso a abertura que deu
+o clique original - se o usuario tivesse navegado e voltado (o mesmo
+cenario acima), o status ja mostraria corretamente "Scan completo..." (ja
+corrigido pela mudanca anterior) mas o botao "Iniciar scan" da tela
+visivel continuava desabilitado dizendo "Escaneando..." pra sempre, e o
+botao "Parar" continuava visivel, mesmo com o scan ja tendo terminado de
+verdade. Corrigido estendendo a mesma indirecao: a funcao registrada
+agora tambem expoe aoTerminarScan() (reseta os botoes e reconfere a
+tabela do zero), e uma nova notificarFimScan() dispara ela em quem
+estiver registrado no momento, no lugar do "finally" mexer direto nos
+seus proprios botoes.
+
+### 2. Revisao linha a linha do resto do arquivo (sem mais bugs novos confirmados)
+
+Reler com calma, do inicio ao fim: storage/IndexedDB (chaves
+GM_setValue/GM_getValue, historico de busca), telaConfigurarGrupos,
+telaHistoricoBusca, encontrarEntidadePorChatId, buscarUltimaMensagemPorChat,
+renderizarTabelaChats, telaResultados ("Ver top reacoes"), telaBusca
+("Buscar mensagens" local), telaBuscaAvancada por inteiro (incluindo o
+restante de buscarPagandoStars, mostrarBotaoPagarStars e os listeners
+finais, que nao tinham sido relidos ainda depois da correcao da v24),
+verificarLinkTelegram (conferido que NAO tem o mesmo problema de
+"objeto min" do item da v24 - contacts.ResolveUsername e
+messages.CheckChatInvite tem o chat/convite como alvo DIRETO do pedido,
+nao uma referencia incidental, entao nao ha o mesmo risco) e
+telaVerificarMensagem ate o fim do arquivo. Nenhum bug novo confirmado
+alem do item 1 acima.
+
+Um ponto avaliado e descartado por ser diferenca de design correta, nao
+inconsistencia: criarItemResultadoGlobal() (busca por conteudo) classifica
+"grupo" x "canal" olhando chat.megagroup, enquanto renderizarListaPorNome()
+(busca por nome) olha chat.broadcast. Nao sao a mesma logica por acaso -
+channels.SearchPosts so pode devolver canal/supergrupo (Api.Channel), onde
+megagroup sempre resolve certo; ja contacts.search pode devolver tambem
+grupo classico antigo (Api.Chat, sem campo broadcast/megagroup nenhum), e
+nesse caso so o teste por chat.broadcast (undefined -> "grupo") classifica
+certo. Cada tela testa o campo certo pro tipo de objeto que sua API
+realmente pode devolver.
+
+Versao 2026.10.09.25.

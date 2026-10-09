@@ -110,6 +110,44 @@
     let bancoPromessa = null;
     let scanEmAndamento = false;
     let cancelarScanSolicitado = false;
+
+    // Qual tela de "Escanear" (ver telaScanner) esta registrada pra RECEBER
+    // status/atualizacao de tabela agora - nunca "quem comecou o scan".
+    // Sem isso, abrir o painel, iniciar um scan, navegar pra outra tela e
+    // voltar pra "Escanear" deixava a tela nova com "Scan ja esta
+    // rodando..." congelado pra sempre: os callbacks de status/tabela
+    // continuavam presos nos elementos da ABERTURA ANTERIOR (ja fora do
+    // DOM, invisivel), e a nova abertura nunca recebia nenhuma atualizacao
+    // dali em diante, nem mesmo a mensagem final de "scan completo".
+    // escanearTudo() (e o clique de "Iniciar scan") sempre notificam quem
+    // estiver registrado AQUI no momento, e toda abertura de telaScanner()
+    // se registra de novo, substituindo a anterior.
+    //
+    // notificarFimScan() cobre a MESMA situacao pro lado dos botoes: antes,
+    // o "finally" do clique em "Iniciar scan" resetava diretamente os
+    // botoes/select da abertura que CHAMOU escanearTudo() - se enquanto isso
+    // o usuario tivesse navegado pra outra tela e voltado (como no caso
+    // acima), a abertura visivel na tela (a mais recente) nunca tinha seus
+    // botoes resetados: "Iniciar scan de novo" ficava preso desabilitado
+    // dizendo "Escaneando..." e o botao "Parar" continuava visivel pra
+    // sempre, mesmo com o status ja mostrando "Scan completo...". Por isso
+    // o reset de botoes tambem passa a ser dirigido pra quem estiver
+    // registrado AQUI no momento em que o scan termina, igual status/tabela.
+    let visualizacaoScanAtiva = null;
+    function registrarVisualizacaoScanAtiva(visualizacao) {
+        visualizacaoScanAtiva = visualizacao;
+    }
+    function notificarStatusScan(texto) {
+        if (visualizacaoScanAtiva) visualizacaoScanAtiva.atualizarStatus(texto);
+    }
+    async function notificarAtualizacaoChatScan() {
+        if (visualizacaoScanAtiva) await visualizacaoScanAtiva.aoAtualizarChat();
+    }
+    async function notificarFimScan() {
+        if (visualizacaoScanAtiva && visualizacaoScanAtiva.aoTerminarScan) {
+            await visualizacaoScanAtiva.aoTerminarScan();
+        }
+    }
     let saidaPendente = false; // true = usuario ja clicou "sair" uma vez, espera o segundo clique pra confirmar
     let timeoutSaida = null;
 
@@ -1508,6 +1546,33 @@
         const ultimasMensagens = await buscarUltimaMensagemPorChat().catch(() => new Map());
         await renderizarTabelaChats(tabela, db, ultimasMensagens);
 
+        // Registra ESTA abertura como quem recebe status/atualizacao de
+        // tabela agora - mesmo se um scan iniciado numa abertura ANTERIOR
+        // desta tela ainda estiver rodando (scanEmAndamento true). Sem
+        // isso, voltar pra "Escanear" enquanto um scan comecado antes
+        // ainda roda mostrava "Scan ja esta rodando..." congelado pra
+        // sempre, sem nenhuma atualizacao de progresso nem a mensagem final
+        // quando terminasse.
+        registrarVisualizacaoScanAtiva({
+            atualizarStatus: (texto) => {
+                status.textContent = texto;
+            },
+            aoAtualizarChat: () => renderizarTabelaChats(tabela, db, ultimasMensagens),
+            // Reseta OS BOTOES desta abertura (a mais recente, que e a
+            // visivel na tela quando o scan termina) e reconfere a tabela do
+            // zero (a lista anterior pode ter ficado velha - o proprio scan
+            // que acabou de rodar muda o que conta como "desatualizado").
+            // Ver comentario em notificarFimScan()/visualizacaoScanAtiva.
+            aoTerminarScan: async () => {
+                botaoIniciar.disabled = false;
+                botaoIniciar.textContent = "Iniciar scan de novo";
+                botaoParar.style.display = "none";
+                selectGrupo.disabled = false;
+                const ultimasMensagensPosScan = await buscarUltimaMensagemPorChat().catch(() => new Map());
+                await renderizarTabelaChats(tabela, db, ultimasMensagensPosScan);
+            },
+        });
+
         botaoIniciar.addEventListener("click", async () => {
             botaoIniciar.disabled = true;
             botaoIniciar.textContent = "Escaneando...";
@@ -1515,30 +1580,22 @@
             selectGrupo.disabled = true;
             const apenasChatId = selectGrupo.value || null;
             try {
-                await escanearTudo(
-                    (texto) => {
-                        status.textContent = texto;
-                    },
-                    apenasChatId,
-                    () => renderizarTabelaChats(tabela, db, ultimasMensagens)
+                await escanearTudo(apenasChatId);
+                notificarStatusScan(
+                    cancelarScanSolicitado
+                        ? "Scan interrompido - o que ja foi visto fica salvo, pode retomar depois."
+                        : apenasChatId
+                        ? "Scan completo nesse grupo."
+                        : "Scan completo em todos os grupos/canais."
                 );
-                status.textContent = cancelarScanSolicitado
-                    ? "Scan interrompido - o que ja foi visto fica salvo, pode retomar depois."
-                    : apenasChatId
-                    ? "Scan completo nesse grupo."
-                    : "Scan completo em todos os grupos/canais.";
             } catch (erro) {
-                status.textContent = "Erro durante o scan: " + (erro && erro.message ? erro.message : erro);
+                notificarStatusScan("Erro durante o scan: " + (erro && erro.message ? erro.message : erro));
             } finally {
-                botaoIniciar.disabled = false;
-                botaoIniciar.textContent = "Iniciar scan de novo";
-                botaoParar.style.display = "none";
-                selectGrupo.disabled = false;
-                // Reconfere do zero (a lista anterior pode ter ficado velha -
-                // o proprio scan que acabou de rodar muda o que conta como
-                // "desatualizado").
-                const ultimasMensagensPosScan = await buscarUltimaMensagemPorChat().catch(() => new Map());
-                await renderizarTabelaChats(tabela, db, ultimasMensagensPosScan);
+                // Dirigido pra abertura ATUALMENTE registrada (ver
+                // notificarFimScan()), nao necessariamente esta mesma
+                // abertura - cobre o caso de ter navegado pra outra tela e
+                // voltado enquanto este scan ainda rodava.
+                await notificarFimScan();
             }
         });
     }
@@ -1546,8 +1603,11 @@
     // apenasChatId: null/"" escaneia todos os grupos/canais (como antes); um
     // chatId especifico faz so aquele grupo, sem depender da ordem que
     // iterDialogs() devolve.
-    // aoAtualizarChat: callback opcional chamado toda vez que um chat e
-    // salvo (checkpoint ou fim), pra tela de scan atualizar a tabela ao vivo.
+    // Status e atualizacao de tabela nao vem mais por parametro - vao
+    // direto por notificarStatusScan()/notificarAtualizacaoChatScan() (ver
+    // comentario em visualizacaoScanAtiva, perto do topo do arquivo), que
+    // sempre alcancam QUALQUER telaScanner() aberta no momento, mesmo se
+    // for diferente da que chamou escanearTudo().
     //
     // Cada chat passa por duas fases, sem nenhum toggle manual:
     //
@@ -1565,7 +1625,7 @@
     // lastScannedMessageId pra frente, pegando so mensagem nova. So comeca
     // se a fase 1 nao foi interrompida (senao o chat fica pra terminar o
     // backfill na proxima vez antes de seguir pra mensagem nova).
-    async function escanearTudo(atualizarStatus, apenasChatId, aoAtualizarChat) {
+    async function escanearTudo(apenasChatId) {
         if (scanEmAndamento) return;
         scanEmAndamento = true;
         cancelarScanSolicitado = false;
@@ -1625,13 +1685,13 @@
                         backfillAlvo,
                         textoCompletoAte,
                     });
-                    if (aoAtualizarChat) await aoAtualizarChat();
+                    await notificarAtualizacaoChatScan();
                 };
 
                 // ---- Fase 1: backfill automatico do historico antigo ----
                 if (textoCompletoAte < backfillAlvo) {
                     let totalVistas = 0;
-                    atualizarStatus(
+                    notificarStatusScan(
                         `${chatTitle}: completando historico antigo (mensagem ${textoCompletoAte} ate ${backfillAlvo})...`
                     );
                     for await (const mensagem of cliente.iterMessages(dialog.entity, {
@@ -1660,7 +1720,7 @@
 
                         if (totalVistas % 500 === 0) {
                             const segundos = Math.round((Date.now() - inicio) / 1000);
-                            atualizarStatus(
+                            notificarStatusScan(
                                 `${chatTitle}: completando historico antigo, ${totalVistas} mensagens (${segundos}s)...`
                             );
                             await salvarCheckpoint(false);
@@ -1675,7 +1735,7 @@
                 }
 
                 // ---- Fase 2: scan incremental normal (so mensagem nova) ----
-                atualizarStatus(`Escaneando: ${chatTitle} (a partir da mensagem ${lastScannedMessageId})...`);
+                notificarStatusScan(`Escaneando: ${chatTitle} (a partir da mensagem ${lastScannedMessageId})...`);
                 let totalVistas = 0;
                 let comReacao = 0;
                 let terminouSemCancelar = true;
@@ -1711,7 +1771,7 @@
 
                     if (totalVistas % 500 === 0) {
                         const segundos = Math.round((Date.now() - inicio) / 1000);
-                        atualizarStatus(
+                        notificarStatusScan(
                             `${chatTitle}: ${totalVistas} mensagens verificadas (${segundos}s), ${comReacao} com reacao...`
                         );
                         await salvarCheckpoint(false);
@@ -2832,12 +2892,17 @@
             // o dado certo ja vem pronto, sem risco de confundir com um
             // numero qualquer digitado no texto, tipo um preco).
             const { total: totalReacoes } = extrairReacoes(m);
-            // participantsCount TAMBEM ja vem de graca: channels.SearchPosts
-            // devolve, junto com as mensagens, a lista "chats" com o objeto
-            // Channel completo de cada canal/grupo referenciado (e'
-            // exatamente isso que chatsPorId guarda) - e o Channel basico ja
-            // inclui participantsCount, sem precisar de nenhuma chamada
-            // extra (channels.GetFullChannel) so pra mostrar esse numero.
+            // participantsCount NEM SEMPRE vem de graca aqui: channels.
+            // SearchPosts devolve, junto com as mensagens, a lista "chats"
+            // com o canal/grupo referenciado (chatsPorId guarda isso), mas
+            // esse chat e so uma REFERENCIA de quem mandou a mensagem
+            // encontrada - nao o alvo direto do pedido - entao a API pode
+            // devolver ele na forma reduzida ("min", ver
+            // core.telegram.org/api/min), sem participantsCount. So mostra
+            // aqui quando ja vier preenchido de graca; "Ordenar por: Mais
+            // membros" (mais abaixo) e quem busca o numero que falta sob
+            // demanda via garantirParticipantsCount(), so quando o usuario
+            // realmente pede essa ordenacao.
             const membros = chat && chat.participantsCount != null ? chat.participantsCount : null;
 
             const item = document.createElement("div");
