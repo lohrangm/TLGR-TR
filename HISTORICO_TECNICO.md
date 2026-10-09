@@ -1769,3 +1769,57 @@ e nao foram tocados nessa entrega; ficam como candidatos a limpeza/arquivo
 numa proxima rodada, se o usuario quiser.
 
 Versao 2026.10.09.23.
+
+## v2026.10.09.24: corrige "Ordenar por: Mais membros" (nao reordenava de verdade) e replica ordenacao pra "Buscar por nome"
+
+Duas perguntas do usuario nessa rodada.
+
+### 1. Grupo novo aparece sozinho em "Configurar grupos"/scan?
+
+Conferido no codigo (sem mudanca necessaria): sim, ja funciona assim.
+carregarGruposParaSelecao() (usada por "Configurar grupos") e escanearTudo()
+(o scan "Todos") chamam iterTodosOsDialogs() direto, que e uma chamada ao
+vivo pro servidor do Telegram (messages.GetDialogs) toda vez que a tela
+abre ou o scan roda - nunca um cache local. Um grupo que o usuario acabou
+de entrar aparece automaticamente na proxima vez que "Configurar grupos"
+for aberto (ja marcado pra escanear, por padrao) e entra sozinho no
+proximo scan "Todos", sem nenhum passo manual.
+
+### 2. "Ordenar por: Mais membros" nao esta funcionando
+
+Usuario reportou que selecionar "Mais membros" na busca por conteudo nao
+reordena nada - confirmado. Causa raiz: os objetos Channel/Chat que vem
+dentro de channels.SearchPosts (o chat e so uma REFERENCIA de quem mandou
+a mensagem encontrada, nao o alvo direto da busca) frequentemente vem na
+forma reduzida que a propria API do Telegram chama de "min" (ver
+core.telegram.org/api/min) - sem participantsCount preenchido. Como a
+ordenacao tratava "sem numero" como -1, praticamente todo item empatava
+nesse -1 e a ordem de chegada (cronologica) ficava, mesmo com "Mais
+membros" selecionado.
+
+Correcao: nova funcao compartilhada garantirParticipantsCount(chat) - só
+quando o usuario realmente seleciona "Mais membros" (nunca automatico),
+busca o numero de membros que falta via channels.GetFullChannel (que
+sempre traz participantsCount, quando o canal nao esconde esse dado de
+proposito), uma chamada por canal unico (cache por chatId, nunca repete o
+mesmo canal, nem entre telas diferentes), sequencial (nunca em paralelo,
+risco de flood). Enquanto isso roda, mostra "Carregando numero de
+membros..." e desabilita o seletor. Aplicado em todo fluxo que pode levar
+a "Mais membros": busca nova, "Carregar mais" e a busca paga em Stars -
+todos agora passam por ordenarERenderizar() em vez de chamar
+renderizarListaGlobal() direto.
+
+Replicacao pedida pelo usuario (reforcou: toda opcao nova discutida tem
+que ser avaliada em TODAS as abas de busca, nao só aplicada numa): "Buscar
+por nome" (contacts.search) ganhou o mesmo seletor "Ordenar grupo/canal
+por: Mais membros" (reusa garantirParticipantsCount) - so afeta a parte de
+grupo/canal da lista, usuario nao tem esse conceito e continua na ordem
+que a API devolveu. Avaliado e descartado por nao ser pertinente: o
+checkbox de "extrair e verificar link" e o filtro "so com link" (ambos
+fazem sentido em cima de TEXTO de mensagem - "Buscar por nome" nao lista
+mensagem nenhuma, lista o proprio grupo/canal/usuario) e a tela de "Buscar
+mensagens" local (ja tem seu proprio "ordenarPor: data/reacoes", que e
+sobre ranquear mensagem dentro de um grupo ja escolhido, nao sobre
+descobrir qual canal tem mais membros - escopo diferente).
+
+Versao 2026.10.09.24.

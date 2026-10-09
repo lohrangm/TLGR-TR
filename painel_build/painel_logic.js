@@ -2426,6 +2426,32 @@
         corpo.appendChild(tituloPorNome);
 
         const campoBuscaPorNome = campoTexto(corpo, 'Nome ou @username (ex.: "Palmeiras")', "text");
+
+        // So faz sentido ordenar grupo/canal por numero de membros - usuario
+        // nao tem esse conceito, entao esse seletor so afeta a parte de
+        // grupo/canal da lista (a de usuario sempre fica na ordem que a API
+        // devolveu). Mesma ideia (e mesmo texto de opcao "Mais membros") do
+        // seletor equivalente na busca por conteudo, mais abaixo - pedido do
+        // usuario de replicar as mesmas opcoes em toda tela de busca, nao
+        // deixar um recurso so numa aba.
+        const blocoOrdenarPorNome = document.createElement("div");
+        blocoOrdenarPorNome.style.cssText = "margin-bottom:10px;";
+        const labelOrdenarPorNome = document.createElement("label");
+        labelOrdenarPorNome.textContent = "Ordenar grupo/canal por: ";
+        labelOrdenarPorNome.style.cssText = "color:#8b92a3;font-size:12px;";
+        const selectOrdenarPorNome = document.createElement("select");
+        selectOrdenarPorNome.style.cssText =
+            "background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:4px;font-size:12px;";
+        // Ao contrario da busca por conteudo (que e cronologica, por isso
+        // "Mais recentes" la), a ordem que contacts.search devolve nao e
+        // documentada pela API (provavelmente relevancia) - rotulo honesto
+        // em vez de chamar de "recente" algo que nao foi confirmado que e.
+        selectOrdenarPorNome.innerHTML =
+            '<option value="relevancia">Como o Telegram devolveu</option><option value="membros">Mais membros</option>';
+        labelOrdenarPorNome.appendChild(selectOrdenarPorNome);
+        blocoOrdenarPorNome.appendChild(labelOrdenarPorNome);
+        corpo.appendChild(blocoOrdenarPorNome);
+
         const botaoBuscarPorNome = botaoAcao(corpo, "Buscar por nome");
         const listaPorNome = document.createElement("div");
         listaPorNome.style.marginBottom = "16px";
@@ -2456,6 +2482,114 @@
             }
         }
 
+        // Canal/grupo referenciado dentro de uma mensagem encontrada por
+        // busca por conteudo (channels.SearchPosts) ou que bateu por nome
+        // (contacts.search) pode vir em versao reduzida da API, sem
+        // participantsCount preenchido - o Telegram chama isso de objeto
+        // "min" (ver core.telegram.org/api/min), e acontece sobretudo
+        // quando o canal e so uma referencia dentro de outra coisa, nao o
+        // alvo direto do pedido. Era exatamente isso que fazia "Ordenar
+        // por: Mais membros" nao reordenar nada de verdade (reportado pelo
+        // usuario): os participantsCount vinham ausentes pra maioria dos
+        // resultados, entao tudo empatava e a ordem de chegada ficava.
+        // channels.GetFullChannel sempre tem participantsCount preenchido
+        // (quando o canal nao esconde esse numero de proposito) - busca sob
+        // demanda, so quando o usuario realmente escolhe ordenar por
+        // membros (nunca automatico, pra nao gastar uma chamada de API por
+        // canal a toa), e guarda o resultado por chatId pra nunca pedir o
+        // mesmo canal duas vezes nesta tela - vale tanto pra busca por
+        // conteudo quanto pra busca por nome, ja que as duas usam esta
+        // mesma funcao.
+        const participantsCountResolvido = new Map();
+        async function garantirParticipantsCount(chat) {
+            if (!chat || chat.participantsCount != null) return;
+            const chave = String(chat.id);
+            if (participantsCountResolvido.has(chave)) {
+                const valorCache = participantsCountResolvido.get(chave);
+                if (valorCache != null) chat.participantsCount = valorCache;
+                return;
+            }
+            try {
+                const completo = await cliente.invoke(new Api.channels.GetFullChannel({ channel: chat }));
+                const total =
+                    completo.fullChat && typeof completo.fullChat.participantsCount === "number"
+                        ? completo.fullChat.participantsCount
+                        : null;
+                participantsCountResolvido.set(chave, total);
+                if (total != null) chat.participantsCount = total;
+            } catch (erro) {
+                // Canal sem permissao de ver isso (ou qualquer outro erro) -
+                // so marca como "sem numero mesmo" (nao tenta de novo) e
+                // segue; fica por ultimo na ordenacao por membros, nunca
+                // quebra a tela.
+                participantsCountResolvido.set(chave, null);
+            }
+        }
+
+        // Guarda o ultimo resultado (antes de qualquer ordenacao) pra poder
+        // reordenar na hora, sem precisar buscar de novo - mesma ideia de
+        // resultadosAcumulados/renderizarListaGlobal (busca por conteudo),
+        // so que aqui e um resultado so, sem "carregar mais".
+        let ultimosGruposPorNome = [];
+        let ultimosUsuariosPorNome = [];
+
+        function renderizarListaPorNome() {
+            listaPorNome.innerHTML = "";
+            if (!ultimosGruposPorNome.length && !ultimosUsuariosPorNome.length) {
+                listaPorNome.innerHTML = '<div style="color:#8b92a3;font-size:12px;">Nada encontrado com esse nome.</div>';
+                return;
+            }
+            const grupos = [...ultimosGruposPorNome];
+            if (selectOrdenarPorNome.value === "membros") {
+                grupos.sort((a, b) => (b.participantsCount ?? -1) - (a.participantsCount ?? -1));
+            }
+            for (const chat of grupos) {
+                const linha = document.createElement("div");
+                linha.style.cssText = "padding:6px 0;border-bottom:1px solid #2a2f3a;font-size:12px;";
+                const membros =
+                    typeof chat.participantsCount === "number" ? chat.participantsCount + " membros" : null;
+                const usuario = chat.username ? "@" + chat.username : null;
+                // Canal (broadcast:true) x grupo/supergrupo (sem broadcast)
+                // - mesma distincao que criarItemResultadoGlobal ja faz
+                // pros resultados de busca por conteudo, pra nao
+                // descrever um canal como "grupo" (ou vice-versa) so
+                // nessa lista aqui.
+                const tipo = chat.broadcast ? "canal" : "grupo";
+                linha.innerHTML =
+                    '<span style="color:#4da3ff;">[' + tipo + "]</span> " +
+                    escapeHtml(chat.title || String(chat.id)) +
+                    (usuario ? " (" + escapeHtml(usuario) + ")" : "") +
+                    (membros ? ' <span style="color:#8b92a3;">- ' + membros + "</span>" : "");
+                acrescentarAbrirOuAviso(linha, usuario);
+                listaPorNome.appendChild(linha);
+            }
+            for (const usr of ultimosUsuariosPorNome) {
+                const linha = document.createElement("div");
+                linha.style.cssText = "padding:6px 0;border-bottom:1px solid #2a2f3a;font-size:12px;";
+                const nome = [usr.firstName, usr.lastName].filter(Boolean).join(" ") || "(sem nome)";
+                const usuario = usr.username ? "@" + usr.username : null;
+                linha.innerHTML =
+                    '<span style="color:#8b92a3;">[usuario]</span> ' +
+                    escapeHtml(nome) +
+                    (usuario ? " (" + escapeHtml(usuario) + ")" : "");
+                acrescentarAbrirOuAviso(linha, usuario);
+                listaPorNome.appendChild(linha);
+            }
+        }
+
+        async function ordenarPorNomeERenderizar() {
+            if (selectOrdenarPorNome.value === "membros") {
+                selectOrdenarPorNome.disabled = true;
+                listaPorNome.innerHTML = '<div style="color:#8b92a3;font-size:12px;">Carregando numero de membros...</div>';
+                try {
+                    for (const chat of ultimosGruposPorNome) await garantirParticipantsCount(chat);
+                } finally {
+                    selectOrdenarPorNome.disabled = false;
+                }
+            }
+            renderizarListaPorNome();
+        }
+
         async function buscarPorNome() {
             const termo = campoBuscaPorNome.value.trim();
             if (!termo) {
@@ -2466,45 +2600,9 @@
             botaoBuscarPorNome.disabled = true;
             try {
                 const resultado = await cliente.invoke(new Api.contacts.Search({ q: termo, limit: 20 }));
-                listaPorNome.innerHTML = "";
-                const grupos = resultado.chats || [];
-                const usuarios = resultado.users || [];
-                if (!grupos.length && !usuarios.length) {
-                    listaPorNome.innerHTML = '<div style="color:#8b92a3;font-size:12px;">Nada encontrado com esse nome.</div>';
-                    return;
-                }
-                for (const chat of grupos) {
-                    const linha = document.createElement("div");
-                    linha.style.cssText = "padding:6px 0;border-bottom:1px solid #2a2f3a;font-size:12px;";
-                    const membros =
-                        typeof chat.participantsCount === "number" ? chat.participantsCount + " membros" : null;
-                    const usuario = chat.username ? "@" + chat.username : null;
-                    // Canal (broadcast:true) x grupo/supergrupo (sem broadcast)
-                    // - mesma distincao que criarItemResultadoGlobal ja faz
-                    // pros resultados de busca por conteudo, pra nao
-                    // descrever um canal como "grupo" (ou vice-versa) so
-                    // nessa lista aqui.
-                    const tipo = chat.broadcast ? "canal" : "grupo";
-                    linha.innerHTML =
-                        '<span style="color:#4da3ff;">[' + tipo + "]</span> " +
-                        escapeHtml(chat.title || String(chat.id)) +
-                        (usuario ? " (" + escapeHtml(usuario) + ")" : "") +
-                        (membros ? ' <span style="color:#8b92a3;">- ' + membros + "</span>" : "");
-                    acrescentarAbrirOuAviso(linha, usuario);
-                    listaPorNome.appendChild(linha);
-                }
-                for (const usr of usuarios) {
-                    const linha = document.createElement("div");
-                    linha.style.cssText = "padding:6px 0;border-bottom:1px solid #2a2f3a;font-size:12px;";
-                    const nome = [usr.firstName, usr.lastName].filter(Boolean).join(" ") || "(sem nome)";
-                    const usuario = usr.username ? "@" + usr.username : null;
-                    linha.innerHTML =
-                        '<span style="color:#8b92a3;">[usuario]</span> ' +
-                        escapeHtml(nome) +
-                        (usuario ? " (" + escapeHtml(usuario) + ")" : "");
-                    acrescentarAbrirOuAviso(linha, usuario);
-                    listaPorNome.appendChild(linha);
-                }
+                ultimosGruposPorNome = resultado.chats || [];
+                ultimosUsuariosPorNome = resultado.users || [];
+                await ordenarPorNomeERenderizar();
             } catch (erro) {
                 listaPorNome.innerHTML =
                     '<div style="color:#ff6b6b;font-size:12px;">Erro: ' +
@@ -2517,6 +2615,9 @@
         botaoBuscarPorNome.addEventListener("click", buscarPorNome);
         campoBuscaPorNome.addEventListener("keydown", (ev) => {
             if (ev.key === "Enter") buscarPorNome();
+        });
+        selectOrdenarPorNome.addEventListener("change", () => {
+            if (ultimosGruposPorNome.length || ultimosUsuariosPorNome.length) ordenarPorNomeERenderizar();
         });
 
         const tituloConteudo = document.createElement("div");
@@ -2835,6 +2936,33 @@
             }
         }
 
+        // So quando o modo e "membros": busca o numero de membros (ver
+        // garantirParticipantsCount, mais acima) de todo canal/grupo que
+        // ainda nao tem esse numero, ANTES de redesenhar - sem isso a
+        // maioria dos itens ficava empatada em "sem numero" e "Mais
+        // membros" nao reordenava quase nada de verdade (bug reportado pelo
+        // usuario). So uma chamada de API por canal novo (cache evita
+        // repetir o mesmo canal), nunca em paralelo, pra nao arriscar flood
+        // numa busca com muitos resultados. Chamar de novo enquanto ja esta
+        // buscando (troca rapida de "Carregar mais"/seletor) so pula a
+        // enriquecida e redesenha com o que ja tem - a proxima chamada (ou
+        // o fim desta) acerta o resto.
+        let enriquecendoMembrosGlobal = false;
+        async function ordenarERenderizar() {
+            if (selectOrdenarGlobal.value === "membros" && !enriquecendoMembrosGlobal) {
+                enriquecendoMembrosGlobal = true;
+                selectOrdenarGlobal.disabled = true;
+                lista.innerHTML = '<div style="color:#8b92a3;">Carregando numero de membros...</div>';
+                try {
+                    for (const item of resultadosAcumulados) await garantirParticipantsCount(item.chat);
+                } finally {
+                    enriquecendoMembrosGlobal = false;
+                    selectOrdenarGlobal.disabled = false;
+                }
+            }
+            renderizarListaGlobal();
+        }
+
         async function executarBuscaGlobal(continuar) {
             const termoBruto = campoBusca.value.trim();
             if (!termoBruto) {
@@ -2906,7 +3034,7 @@
                     }
                 }
 
-                renderizarListaGlobal();
+                await ordenarERenderizar();
                 if (erroDeAlgumTermo) {
                     lista.insertAdjacentHTML(
                         "beforeend",
@@ -3014,7 +3142,7 @@
                     );
                     processarRespostaDeBusca(resultado, termoAtual, 1);
                 }
-                renderizarListaGlobal();
+                await ordenarERenderizar();
             } catch (erro) {
                 lista.insertAdjacentHTML(
                     "beforeend",
@@ -3053,7 +3181,7 @@
             if (ev.key === "Enter") executarBuscaGlobal(false);
         });
         selectOrdenarGlobal.addEventListener("change", () => {
-            if (resultadosAcumulados.length) renderizarListaGlobal();
+            if (resultadosAcumulados.length) ordenarERenderizar();
         });
     }
 
