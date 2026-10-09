@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Telegram Top Reacoes - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.09.21
+// @version      2026.10.09.22
 // @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
@@ -169484,7 +169484,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.09.21";
+window.TRP_VERSAO = "2026.10.09.22";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
@@ -171921,6 +171921,31 @@ window.TRP_VERSAO = "2026.10.09.21";
         listaPorNome.style.marginBottom = "16px";
         corpo.appendChild(listaPorNome);
 
+        // Acrescenta o link "abrir @usuario" (mesmo padrao usado em
+        // criarItemResultadoGlobal e criarItemDeLink) numa linha de
+        // resultado - so quando o chat/usuario tem @usuario publico, unico
+        // jeito de abrir https://t.me/<usuario> sem entrar nele. Sem
+        // @usuario (ex.: grupo fechado que o contacts.search achou por
+        // bater com o titulo salvo de algum contato) mostra um aviso em vez
+        // de ficar sem nada, pra ficar claro que a falta do link e
+        // esperada, nao um bug.
+        function acrescentarAbrirOuAviso(linha, usuario) {
+            if (usuario) {
+                const abrir = document.createElement("div");
+                abrir.style.cssText = "color:#4da3ff;font-size:11px;cursor:pointer;margin-top:4px;";
+                abrir.textContent = "abrir " + usuario;
+                abrir.addEventListener("click", () => {
+                    window.open("https://t.me/" + usuario.slice(1), "_blank");
+                });
+                linha.appendChild(abrir);
+            } else {
+                const aviso = document.createElement("div");
+                aviso.style.cssText = "color:#8b92a3;font-size:11px;margin-top:4px;";
+                aviso.textContent = "sem @usuario publico - nao da pra abrir direto";
+                linha.appendChild(aviso);
+            }
+        }
+
         async function buscarPorNome() {
             const termo = campoBuscaPorNome.value.trim();
             if (!termo) {
@@ -171928,6 +171953,7 @@ window.TRP_VERSAO = "2026.10.09.21";
                 return;
             }
             listaPorNome.innerHTML = '<div style="color:#8b92a3;font-size:12px;">Buscando...</div>';
+            botaoBuscarPorNome.disabled = true;
             try {
                 const resultado = await cliente.invoke(new Api.contacts.Search({ q: termo, limit: 20 }));
                 listaPorNome.innerHTML = "";
@@ -171943,11 +171969,18 @@ window.TRP_VERSAO = "2026.10.09.21";
                     const membros =
                         typeof chat.participantsCount === "number" ? chat.participantsCount + " membros" : null;
                     const usuario = chat.username ? "@" + chat.username : null;
+                    // Canal (broadcast:true) x grupo/supergrupo (sem broadcast)
+                    // - mesma distincao que criarItemResultadoGlobal ja faz
+                    // pros resultados de busca por conteudo, pra nao
+                    // descrever um canal como "grupo" (ou vice-versa) so
+                    // nessa lista aqui.
+                    const tipo = chat.broadcast ? "canal" : "grupo";
                     linha.innerHTML =
-                        '<span style="color:#4da3ff;">[grupo/canal]</span> ' +
+                        '<span style="color:#4da3ff;">[' + tipo + "]</span> " +
                         escapeHtml(chat.title || String(chat.id)) +
                         (usuario ? " (" + escapeHtml(usuario) + ")" : "") +
                         (membros ? ' <span style="color:#8b92a3;">- ' + membros + "</span>" : "");
+                    acrescentarAbrirOuAviso(linha, usuario);
                     listaPorNome.appendChild(linha);
                 }
                 for (const usr of usuarios) {
@@ -171959,6 +171992,7 @@ window.TRP_VERSAO = "2026.10.09.21";
                         '<span style="color:#8b92a3;">[usuario]</span> ' +
                         escapeHtml(nome) +
                         (usuario ? " (" + escapeHtml(usuario) + ")" : "");
+                    acrescentarAbrirOuAviso(linha, usuario);
                     listaPorNome.appendChild(linha);
                 }
             } catch (erro) {
@@ -171966,6 +172000,8 @@ window.TRP_VERSAO = "2026.10.09.21";
                     '<div style="color:#ff6b6b;font-size:12px;">Erro: ' +
                     escapeHtml(erro && erro.message ? erro.message : String(erro)) +
                     "</div>";
+            } finally {
+                botaoBuscarPorNome.disabled = false;
             }
         }
         botaoBuscarPorNome.addEventListener("click", buscarPorNome);

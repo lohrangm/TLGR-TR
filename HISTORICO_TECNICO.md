@@ -1668,3 +1668,48 @@ adiantados a pedido do usuario ("segue adiantando o que falta").
   depois, por isso esse fluxo so roda uma vez por busca nova.
 
 Versao 2026.10.09.21.
+
+## v2026.10.09.22: revisao de detalhes - "buscar por nome" (resultado nao clicavel) e correcoes relacionadas
+
+Usuario reportou (com print) que a "Buscar grupo/canal/usuario por NOME"
+(v2026.10.09.20) mostra resultado com a tag "[grupo/canal]" pintada de azul
+(cara de link) mas sem NENHUM jeito de clicar - diferente de todo o resto
+da tela (busca por conteudo, conferir link colado), que sempre tem um
+"abrir @usuario" clicavel. Pediu, junto, pra parar de ir corrigindo um
+detalhe de cada vez e revisar tudo com calma antes da proxima entrega, pra
+nao ficar em ida-e-volta lenta.
+
+Causa raiz confirmada: a funcao buscarPorNome() monta cada linha de
+resultado (tanto pra grupo/canal quanto pra usuario) so com innerHTML de
+texto, sem nenhum elemento "abrir" nem addEventListener - foi um
+esquecimento de quando essa funcionalidade foi construida (v20), já que as
+duas funcoes irmas (criarItemResultadoGlobal, da busca por conteudo, e
+criarItemDeLink, do conferidor de link colado) sempre tiveram esse "abrir"
+clicavel desde o inicio.
+
+Correcao (revisao completa da tela, nao so o ponto reportado):
+
+- Resultado de grupo/canal e de usuario em "Buscar por nome" agora tem um
+  "abrir @usuario" clicavel (abre https://t.me/<usuario> numa aba nova),
+  igual ao padrao ja usado no resto da tela - via uma funcao compartilhada
+  nova (acrescentarAbrirOuAviso), evitando duplicar a logica entre os dois
+  loops (grupo/canal e usuario).
+- Resultado SEM @usuario publico (ex.: grupo fechado que bateu pelo titulo
+  salvo de algum contato) agora mostra "sem @usuario publico - nao da pra
+  abrir direto" em vez de simplesmente nao ter nada - antes dava pra
+  confundir com o mesmo bug (parece que devia ter link e nao tem), agora
+  fica claro que e esperado.
+- Resultado de grupo/canal agora distingue "grupo" de "canal" (usando o
+  campo broadcast do chat) em vez do rotulo generico "[grupo/canal]" fixo -
+  mesma distincao que a busca por conteudo (criarItemResultadoGlobal) ja
+  fazia, so que essa tela nao fazia ainda.
+- Botao "Buscar por nome" agora desabilita durante a busca (igual ao botao
+  da busca por conteudo) - evita clique duplo disparar duas buscas e a
+  resposta mais antiga sobrescrever a mais nova por ultimo.
+
+Revisado tambem, sem achar mais nada quebrado: o restante da tela de Busca
+avancada (conferir link colado, filtro "so com link", ordenar por membros,
+pagamento em Stars) - todos ja tinham tratamento de erro, estado de
+botao e feedback visual consistentes.
+
+Versao 2026.10.09.22.
