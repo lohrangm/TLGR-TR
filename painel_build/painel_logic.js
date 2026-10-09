@@ -420,23 +420,54 @@
         return texto || "[midia ou mensagem sem texto]";
     }
 
-    // Acha links t.me num texto - tanto de @usuario (t.me/nome) quanto de
-    // convite por hash (t.me/joinchat/XXX ou t.me/+XXX). Usado pelo filtro
-    // "links de grupo" da Busca avancada (telaBuscaAvancada), pra oferecer
-    // verificar se o link ainda e valido em vez do usuario precisar clicar
-    // em cada um pra descobrir. new RegExp() a cada chamada (em vez de um
-    // regex /g compartilhado no modulo) de proposito - regex com /g guarda
-    // posicao entre chamadas (lastIndex), e reusar o mesmo objeto entre
-    // mensagens diferentes e um jeito classico de perder ou duplicar match
-    // por engano.
+    // Acha links do Telegram num texto - t.me de @usuario (t.me/nome), t.me
+    // de convite por hash (t.me/joinchat/XXX ou t.me/+XXX), e tambem o
+    // esquema nativo tg://join?invite=XXX (formato que a maioria dos sites
+    // externos que agregam link de grupo publico usa, ex. diretorios de
+    // grupo por categoria). Usado pelo filtro "links de grupo" da Busca
+    // avancada (telaBuscaAvancada) e pela caixa de "conferir link colado" -
+    // pra oferecer verificar se o link ainda e valido em vez do usuario
+    // precisar abrir cada um so pra descobrir. new RegExp() a cada chamada
+    // (em vez de um regex /g compartilhado no modulo) de proposito - regex
+    // com /g guarda posicao entre chamadas (lastIndex), e reusar o mesmo
+    // objeto entre textos diferentes e um jeito classico de perder ou
+    // duplicar match por engano.
     function extrairLinksTelegram(texto) {
         const links = [];
         if (!texto) return links;
-        const regex = /(?:https?:\/\/)?t\.me\/(\+|joinchat\/)?([a-zA-Z0-9_]{3,})/g;
-        let m;
-        while ((m = regex.exec(texto))) {
-            links.push({ ehConvite: !!m[1], valor: m[2] });
+        const vistos = new Set();
+        const adicionar = (ehConvite, valor) => {
+            const chave = (ehConvite ? "c:" : "u:") + valor.toLowerCase();
+            if (vistos.has(chave)) return;
+            vistos.add(chave);
+            links.push({ ehConvite, valor });
+        };
+
+        // O link pode vir url-encoded (ex.: colado de dentro de uma URL do
+        // tipo web.telegram.org/k/#?tgaddr=tg%3A%2F%2Fjoin%3Finvite%3DXXX,
+        // que e como o proprio Telegram Web representa um tg://join colado
+        // na barra de enderecos) - decodifica uma vez antes de rodar os
+        // regex, assim o formato puro e o encoded caem no mesmo caminho. Se
+        // o texto tiver um "%" que nao e um escape valido, decodeURIComponent
+        // lanca erro - nesse caso segue com o texto original, sem decodificar.
+        let textoDecodificado = texto;
+        try {
+            textoDecodificado = decodeURIComponent(texto);
+        } catch (erro) {
+            // nao e url-encoded (ou esta mal formado) - usa o texto como veio
         }
+
+        const regexTMe = /(?:https?:\/\/)?t\.me\/(\+|joinchat\/)?([a-zA-Z0-9_]{3,})/g;
+        let m;
+        while ((m = regexTMe.exec(textoDecodificado))) {
+            adicionar(!!m[1], m[2]);
+        }
+
+        const regexTgJoin = /tg:\/\/join\?invite=([a-zA-Z0-9_-]+)/g;
+        while ((m = regexTgJoin.exec(textoDecodificado))) {
+            adicionar(true, m[1]);
+        }
+
         return links;
     }
 
@@ -466,6 +497,48 @@
         } catch (erro) {
             return { valido: false, erro: erro && erro.message ? erro.message : String(erro) };
         }
+    }
+
+    // Cria a linha "verificando..." pra um link achado (por
+    // extrairLinksTelegram), dispara verificarLinkTelegram nele e atualiza a
+    // propria linha quando o resultado volta - valido (com titulo/qtd de
+    // participantes, se vierem) ou invalido/expirado. Compartilhado entre o
+    // "links encontrados nos resultados da busca" (telaBuscaAvancada) e a
+    // caixa de "conferir link colado" (mesma tela) - os dois so diferem em
+    // ONDE o link veio de, a verificacao e a apresentacao sao identicas.
+    // "mapaVistos" (valor normalizado -> elemento) evita duplicar o mesmo
+    // link na mesma lista.
+    function criarItemDeLink(link, container, mapaVistos) {
+        const chave = (link.ehConvite ? "convite:" : "usuario:") + link.valor.toLowerCase();
+        if (mapaVistos.has(chave)) return;
+
+        const item = document.createElement("div");
+        item.style.cssText = "padding:6px 0;border-bottom:1px solid #2a2f3a;font-size:12px;";
+        item.textContent = "t.me/" + (link.ehConvite ? "+" : "") + link.valor + " - verificando...";
+        container.appendChild(item);
+        mapaVistos.set(chave, item);
+
+        verificarLinkTelegram(link).then((resultado) => {
+            const enderecoLink = "t.me/" + (link.ehConvite ? "+" : "") + link.valor;
+            if (resultado.valido) {
+                const detalhes = [];
+                if (resultado.titulo) detalhes.push(escapeHtml(resultado.titulo));
+                if (resultado.participantes != null) detalhes.push(resultado.participantes + " participantes");
+                item.innerHTML =
+                    '<span style="color:#5ec26a;">valido</span> - ' +
+                    escapeHtml(enderecoLink) +
+                    (detalhes.length ? " (" + detalhes.join(", ") + ")" : "") +
+                    ' <span style="color:#4da3ff;cursor:pointer;" class="trp-abrir-link">abrir</span>';
+                item.querySelector(".trp-abrir-link").addEventListener("click", () => {
+                    window.open("https://" + enderecoLink, "_blank");
+                });
+            } else {
+                item.innerHTML =
+                    '<span style="color:#ff6b6b;">invalido ou expirado</span> - ' +
+                    escapeHtml(enderecoLink) +
+                    ' <span style="color:#8b92a3;font-size:11px;">(' + escapeHtml(resultado.erro || "") + ")</span>";
+            }
+        });
     }
 
     function truncar(texto, tamanho) {
@@ -2330,6 +2403,91 @@
             );
         corpo.appendChild(aviso);
 
+        // Busca por NOME (contacts.search) - diferente da busca por
+        // hashtag/texto livre logo abaixo, que procura DENTRO do conteudo
+        // das mensagens (channels.SearchPosts). Pedido do usuario depois de
+        // testar a busca por post com termo generico e so achar grupo em
+        // outro idioma/assunto: ele queria achar O GRUPO (ex.: "tem grupo do
+        // Palmeiras?"), nao um post que por acaso menciona a palavra. Isso
+        // e exatamente pra isso - mesma ideia de diretorio de grupo que
+        // sites externos (tipo agregador de link de convite por categoria)
+        // oferecem, so que direto na API oficial do Telegram, sem precisar
+        // de site nenhum. contacts.search e publico, sem cota/Premium/Stars
+        // documentado (so erro de validacao se o texto vier vazio/curto
+        // demais) - NAO entra em nada, so lista.
+        const tituloPorNome = document.createElement("div");
+        tituloPorNome.style.cssText =
+            "color:#8b92a3;margin-bottom:6px;font-weight:600;display:flex;align-items:center;gap:4px;";
+        tituloPorNome.innerHTML =
+            "<span>Buscar grupo/canal/usuario por NOME</span>" +
+            criarIconeInfoHtml(
+                'Diferente da busca por hashtag/texto livre (mais abaixo), que procura DENTRO do conteudo das mensagens - por isso um termo generico acha post de qualquer assunto, ate em outro idioma. Essa aqui procura pelo NOME/username do proprio grupo/canal/usuario, igual a lupa de busca do Telegram - sem cota, sem Premium, sem Stars.'
+            );
+        corpo.appendChild(tituloPorNome);
+
+        const campoBuscaPorNome = campoTexto(corpo, 'Nome ou @username (ex.: "Palmeiras")', "text");
+        const botaoBuscarPorNome = botaoAcao(corpo, "Buscar por nome");
+        const listaPorNome = document.createElement("div");
+        listaPorNome.style.marginBottom = "16px";
+        corpo.appendChild(listaPorNome);
+
+        async function buscarPorNome() {
+            const termo = campoBuscaPorNome.value.trim();
+            if (!termo) {
+                listaPorNome.innerHTML = '<div style="color:#ff6b6b;font-size:12px;">Digita um nome pra buscar.</div>';
+                return;
+            }
+            listaPorNome.innerHTML = '<div style="color:#8b92a3;font-size:12px;">Buscando...</div>';
+            try {
+                const resultado = await cliente.invoke(new Api.contacts.Search({ q: termo, limit: 20 }));
+                listaPorNome.innerHTML = "";
+                const grupos = resultado.chats || [];
+                const usuarios = resultado.users || [];
+                if (!grupos.length && !usuarios.length) {
+                    listaPorNome.innerHTML = '<div style="color:#8b92a3;font-size:12px;">Nada encontrado com esse nome.</div>';
+                    return;
+                }
+                for (const chat of grupos) {
+                    const linha = document.createElement("div");
+                    linha.style.cssText = "padding:6px 0;border-bottom:1px solid #2a2f3a;font-size:12px;";
+                    const membros =
+                        typeof chat.participantsCount === "number" ? chat.participantsCount + " membros" : null;
+                    const usuario = chat.username ? "@" + chat.username : null;
+                    linha.innerHTML =
+                        '<span style="color:#4da3ff;">[grupo/canal]</span> ' +
+                        escapeHtml(chat.title || String(chat.id)) +
+                        (usuario ? " (" + escapeHtml(usuario) + ")" : "") +
+                        (membros ? ' <span style="color:#8b92a3;">- ' + membros + "</span>" : "");
+                    listaPorNome.appendChild(linha);
+                }
+                for (const usr of usuarios) {
+                    const linha = document.createElement("div");
+                    linha.style.cssText = "padding:6px 0;border-bottom:1px solid #2a2f3a;font-size:12px;";
+                    const nome = [usr.firstName, usr.lastName].filter(Boolean).join(" ") || "(sem nome)";
+                    const usuario = usr.username ? "@" + usr.username : null;
+                    linha.innerHTML =
+                        '<span style="color:#8b92a3;">[usuario]</span> ' +
+                        escapeHtml(nome) +
+                        (usuario ? " (" + escapeHtml(usuario) + ")" : "");
+                    listaPorNome.appendChild(linha);
+                }
+            } catch (erro) {
+                listaPorNome.innerHTML =
+                    '<div style="color:#ff6b6b;font-size:12px;">Erro: ' +
+                    escapeHtml(erro && erro.message ? erro.message : String(erro)) +
+                    "</div>";
+            }
+        }
+        botaoBuscarPorNome.addEventListener("click", buscarPorNome);
+        campoBuscaPorNome.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter") buscarPorNome();
+        });
+
+        const tituloConteudo = document.createElement("div");
+        tituloConteudo.style.cssText = "color:#8b92a3;margin-bottom:6px;font-weight:600;";
+        tituloConteudo.textContent = "Buscar por conteudo de post (hashtag ou texto livre)";
+        corpo.appendChild(tituloConteudo);
+
         const statusCota = document.createElement("div");
         statusCota.style.cssText = "color:#8b92a3;margin-bottom:10px;font-size:11px;";
         statusCota.textContent = "Verificando cota de busca por texto livre...";
@@ -2387,6 +2545,28 @@
         );
         corpo.appendChild(blocoLinks);
 
+        // Pedido do usuario: depois de buscar por um assunto (ex. "palmeiras"),
+        // poder ver so os posts que JA citam um link de grupo/canal, em vez de
+        // vasculhar post por post pra achar os poucos que tem link. So
+        // some da lista principal (nao muda quantos posts o Telegram devolve
+        // nem a paginacao) - combinado com o checkbox de cima (extrair e
+        // verificar), fica igual a ideia de um botao so de "procurar links
+        // recentes sobre esse termo".
+        const blocoSoComLink = document.createElement("div");
+        blocoSoComLink.style.cssText = "display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;font-size:12px;";
+        const checkboxSoComLink = criarQuadradoMarcavel(false, null);
+        const labelSoComLink = document.createElement("span");
+        labelSoComLink.textContent = "Mostrar so posts que citam algum link (esconde o resto)";
+        blocoSoComLink.appendChild(checkboxSoComLink.elemento);
+        blocoSoComLink.appendChild(labelSoComLink);
+        blocoSoComLink.insertAdjacentHTML(
+            "beforeend",
+            criarIconeInfoHtml(
+                'Filtra a lista de posts pra mostrar so os que mencionam t.me/... ou tg://join?invite=... no texto - util pra achar "grupo sobre esse assunto" direto, sem ler post que nao tem link nenhum. Marca o checkbox de cima junto pra esses links ja saírem conferidos.'
+            )
+        );
+        corpo.appendChild(blocoSoComLink);
+
         const campoBusca = campoTexto(
             corpo,
             'Palavra-chave (texto livre) ou hashtag (varias: "a;b;c")',
@@ -2412,41 +2592,45 @@
         // seguinte ("Carregar mais").
         const linksVistos = new Map();
 
-        function processarLinksDaMensagem(texto) {
-            for (const link of extrairLinksTelegram(texto)) {
-                const chave = (link.ehConvite ? "convite:" : "usuario:") + link.valor.toLowerCase();
-                if (linksVistos.has(chave)) continue;
+        // Caixa separada pra conferir link achado FORA do Telegram (sites
+        // que agregam convite publico de grupo por categoria, por ex.) sem
+        // precisar rodar uma busca primeiro - cola o texto com o(s) link(s)
+        // (t.me/..., t.me/+hash ou tg://join?invite=hash, um por linha ou
+        // misturado em qualquer texto) e cada um e checado com a mesma
+        // verificarLinkTelegram de cima: NAO entra no grupo, so confere se o
+        // convite ainda e valido e traz titulo/qtd de participantes quando
+        // disponivel.
+        const tituloColar = document.createElement("div");
+        tituloColar.style.cssText = "color:#8b92a3;margin:16px 0 6px;font-weight:600;display:flex;align-items:center;gap:4px;";
+        tituloColar.innerHTML =
+            "<span>Conferir link de fora do Telegram</span>" +
+            criarIconeInfoHtml(
+                "Cola aqui o link de grupo/canal que voce achou em outro lugar (site de diretorio de grupos, por ex.) - aceita t.me/usuario, t.me/+hash e tg://join?invite=hash, um por linha ou misturado em qualquer texto. So confere se o convite ainda e valido e mostra titulo/qtd de participantes - NAO entra no grupo."
+            );
+        corpo.appendChild(tituloColar);
 
-                const item = document.createElement("div");
-                item.style.cssText = "padding:6px 0;border-bottom:1px solid #2a2f3a;font-size:12px;";
-                item.textContent = "t.me/" + (link.ehConvite ? "+" : "") + link.valor + " - verificando...";
-                listaLinks.appendChild(item);
-                linksVistos.set(chave, item);
-                tituloLinks.style.display = "block";
+        const campoColar = document.createElement("textarea");
+        campoColar.placeholder = "Cola aqui um ou mais links (t.me/..., tg://join?invite=...)";
+        campoColar.style.cssText =
+            "width:100%;min-height:60px;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;" +
+            "border-radius:6px;padding:8px;box-sizing:border-box;font-family:inherit;font-size:12px;resize:vertical;";
+        corpo.appendChild(campoColar);
 
-                verificarLinkTelegram(link).then((resultado) => {
-                    const enderecoLink = "t.me/" + (link.ehConvite ? "+" : "") + link.valor;
-                    if (resultado.valido) {
-                        const detalhes = [];
-                        if (resultado.titulo) detalhes.push(escapeHtml(resultado.titulo));
-                        if (resultado.participantes != null) detalhes.push(resultado.participantes + " participantes");
-                        item.innerHTML =
-                            '<span style="color:#5ec26a;">valido</span> - ' +
-                            escapeHtml(enderecoLink) +
-                            (detalhes.length ? " (" + detalhes.join(", ") + ")" : "") +
-                            ' <span style="color:#4da3ff;cursor:pointer;" class="trp-abrir-link">abrir</span>';
-                        item.querySelector(".trp-abrir-link").addEventListener("click", () => {
-                            window.open("https://" + enderecoLink, "_blank");
-                        });
-                    } else {
-                        item.innerHTML =
-                            '<span style="color:#ff6b6b;">invalido ou expirado</span> - ' +
-                            escapeHtml(enderecoLink) +
-                            ' <span style="color:#8b92a3;font-size:11px;">(' + escapeHtml(resultado.erro || "") + ")</span>";
-                    }
-                });
-            }
-        }
+        const botaoConferirColados = botaoAcao(corpo, "Conferir link(s) colado(s)");
+        const avisoNenhumLink = document.createElement("div");
+        avisoNenhumLink.style.cssText = "color:#8b92a3;font-size:12px;margin-top:6px;display:none;";
+        avisoNenhumLink.textContent = "Nenhum link reconhecido nesse texto.";
+        corpo.appendChild(avisoNenhumLink);
+        const listaLinksColados = document.createElement("div");
+        listaLinksColados.style.marginTop = "6px";
+        corpo.appendChild(listaLinksColados);
+        const linksColadosVistos = new Map();
+
+        botaoConferirColados.addEventListener("click", () => {
+            const encontrados = extrairLinksTelegram(campoColar.value);
+            avisoNenhumLink.style.display = encontrados.length ? "none" : "block";
+            for (const link of encontrados) criarItemDeLink(link, listaLinksColados, linksColadosVistos);
+        });
 
         // Pagina do jeito que a doc da API manda: offsetRate = nextRate da
         // pagina anterior (ou a data da ultima mensagem, se nextRate nao
@@ -2619,10 +2803,17 @@
                             const chaveMsg = chatIdMsg + ":" + m.id;
                             if (chavesVistasGlobal.has(chaveMsg)) continue;
                             chavesVistasGlobal.add(chaveMsg);
+
+                            const linksDaMensagem = extrairLinksTelegram(m.message);
+                            if (checkboxSoComLink.checked && !linksDaMensagem.length) continue;
+
                             lista.appendChild(
                                 criarItemResultadoGlobal(m, chatsPorId, termos.length > 1 ? termoAtual : null)
                             );
-                            if (checkboxLinks.checked) processarLinksDaMensagem(m.message);
+                            if (checkboxLinks.checked) {
+                                for (const link of linksDaMensagem) criarItemDeLink(link, listaLinks, linksVistos);
+                                if (linksDaMensagem.length) tituloLinks.style.display = "block";
+                            }
                         }
 
                         if (mensagens.length) {

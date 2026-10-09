@@ -1594,3 +1594,48 @@ Tambem nessa versao:
   usuario (badge "completo" da tabela de status ainda quebrava em 2 linhas).
 
 Versao 2026.10.09.19.
+
+## v2026.10.09.20: busca de grupo/canal/usuario por nome, conferir link colado (tg://join), filtro "so com link"
+
+Usuario testou a busca por conteudo (hashtag/texto livre) com termo generico
+e so achou grupo em idioma/assunto aleatorio - fez sentido explicar que
+channels.SearchPosts busca DENTRO do texto do post, nao pelo NOME do grupo
+(por isso "palmeiras" acha qualquer post que cite a palavra, nao
+necessariamente um grupo sobre o Palmeiras). O que o usuario realmente
+queria - "existe grupo do Palmeiras, deve ter como achar ele" - e busca por
+nome, nao por conteudo. Pesquisado e confirmado no schema oficial:
+contacts.search faz exatamente isso (mesma busca que a lupa nativa do
+Telegram usa) - sem cota, sem Premium, sem Stars documentado, devolve
+grupos/canais E usuarios que batem com o nome/username. Nao existe (nem no
+schema, nem documentado) nenhum metodo que busque por palavra-chave e
+devolva link de CONVITE diretamente - convite por natureza nao e indexado
+(so @usuario publico e buscavel), link de convite e sempre compartilhado por
+fora do Telegram.
+
+Implementado:
+
+- Nova secao "Buscar grupo/canal/usuario por NOME" no topo da tela "Busca
+  avancada", usando contacts.search - campo + botao, mostra grupos/canais
+  (com membros, quando disponivel) e usuarios separadamente. Complementar
+  (nao substitui) a busca por conteudo que ja existia, que continua logo
+  abaixo, agora com titulo proprio ("Buscar por conteudo de post") pra
+  marcar a diferenca.
+- extrairLinksTelegram() agora tambem reconhece tg://join?invite=XXX (alem
+  de t.me/...) e decodifica URL uma vez antes de rodar os regex - cobre o
+  formato que a maioria dos sites externos que agregam link de grupo por
+  categoria usa, e tambem o jeito que o proprio Telegram Web representa um
+  tg://join colado na barra de enderecos
+  (web.telegram.org/k/#?tgaddr=tg%3A%2F%2F...).
+- Nova caixa "Conferir link de fora do Telegram" (mesma tela) - cola o
+  texto com o(s) link(s) achado(s) em outro lugar e cada um e checado (sem
+  entrar no grupo) com a mesma logica que ja existia pra links achados
+  dentro dos resultados de busca. A logica de "criar item, verificar,
+  atualizar linha" foi extraida pra uma funcao compartilhada
+  (criarItemDeLink) entre os dois usos.
+- Novo filtro "Mostrar so posts que citam algum link (esconde o resto)" na
+  busca por conteudo - filtra a lista principal pra só os posts que
+  mencionam t.me/tg://join, junto com o checkbox ja existente de extrair e
+  verificar; juntos cobrem a ideia do usuario de "buscar um assunto e ja
+  sair com os links de grupo relacionados mencionados em posts publicos".
+
+Versao 2026.10.09.20.
