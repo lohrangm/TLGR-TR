@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from "fs";
 // dia, comecando em 1) - BUMP AQUI a cada vez que gerar uma nova entrega,
 // pra quem esta testando saber se o Tampermonkey ja pegou a versao nova ou
 // ainda esta rodando uma antiga.
-const VERSAO = "2026.10.09.22";
+const VERSAO = "2026.10.09.23";
 
 // URL que o proprio Tampermonkey confere (sozinho, periodicamente, ou na
 // hora se voce pedir "Check for userscript updates" no Dashboard dele)
@@ -25,10 +25,10 @@ const VERSAO = "2026.10.09.22";
 const URL_ATUALIZACAO = "https://raw.githubusercontent.com/lohrangm/TLGR-TR/master/painel_build/painel_telegram.user.js";
 
 const CABECALHO = `// ==UserScript==
-// @name         Telegram Top Reacoes - Painel
+// @name         Gestor TLGR - Painel
 // @namespace    telegram-top-reacoes
 // @version      ${VERSAO}
-// @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
+// @description  Login e scanner de reacoes, busca de grupos/canais e mais, tudo direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
 // @grant        GM_getValue

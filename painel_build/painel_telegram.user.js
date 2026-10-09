@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Telegram Top Reacoes - Painel
+// @name         Gestor TLGR - Painel
 // @namespace    telegram-top-reacoes
-// @version      2026.10.09.22
-// @description  Login e (nas proximas versoes) scanner de reacoes direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
+// @version      2026.10.09.23
+// @description  Login e scanner de reacoes, busca de grupos/canais e mais, tudo direto dentro do Telegram Web, sem servidor local - cliente MTProto rodando em JS puro no proprio navegador
 // @match        https://web.telegram.org/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -169484,7 +169484,7 @@ store2/dist/store2.js:
   * Copyright (c) 2024 Nathan Bubna; Licensed MIT *)
 */
 
-window.TRP_VERSAO = "2026.10.09.22";
+window.TRP_VERSAO = "2026.10.09.23";
 
 // ==== FIM DO BUNDLE DO TELEPROTO - A PARTIR DAQUI E painel_logic.js ====
 
@@ -170074,7 +170074,7 @@ window.TRP_VERSAO = "2026.10.09.22";
 
     function criarBotao() {
         const botao = document.createElement("button");
-        botao.textContent = "Top Reacoes";
+        botao.textContent = "Gestor TLGR";
         Object.assign(botao.style, {
             position: "fixed",
             bottom: "24px",
@@ -170239,7 +170239,7 @@ window.TRP_VERSAO = "2026.10.09.22";
         cabecalho.style.cssText =
             "display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;";
         cabecalho.innerHTML =
-            '<strong id="trp-titulo-tela">Top Reacoes</strong>' +
+            '<strong id="trp-titulo-tela">Gestor TLGR</strong>' +
             '<span style="color:#8b92a3;font-size:11px;margin-left:6px;">v' +
             escapeHtml(VERSAO_PAINEL) +
             "</span>" +
@@ -170252,14 +170252,14 @@ window.TRP_VERSAO = "2026.10.09.22";
         cabecalho.querySelector("#trp-sair").addEventListener("click", aoClicarSair);
     }
 
-    // Antes o cabecalho sempre mostrava so "Top Reacoes", igual em
+    // Antes o cabecalho sempre mostrava so "Gestor TLGR", igual em
     // qualquer tela - sem olhar o corpo, nao dava pra saber em qual tela
     // o painel estava (ex. depois de rolar pro topo). Cada tela chama isso
     // logo no inicio com seu proprio nome; telaLogado() (o menu) chama
     // com null, que volta a mostrar so o nome do app.
     function definirTituloTela(nomeTela) {
         const titulo = painel && painel.querySelector("#trp-titulo-tela");
-        if (titulo) titulo.textContent = nomeTela ? "Top Reacoes - " + nomeTela : "Top Reacoes";
+        if (titulo) titulo.textContent = nomeTela ? "Gestor TLGR - " + nomeTela : "Gestor TLGR";
     }
 
     // So aparece quando tem sessao ativa (telaLogado chama isso). Fica
@@ -170493,7 +170493,7 @@ window.TRP_VERSAO = "2026.10.09.22";
         return new TelegramClient(new StringSession(sessaoSalva || ""), parseInt(apiId, 10), apiHash, {
             connectionRetries: 3,
             networkSocket: PromisedWebSockets,
-            deviceModel: "Painel Top Reacoes",
+            deviceModel: "Painel Gestor TLGR",
             systemVersion: "Tampermonkey",
             useWSS: true,
         });
@@ -171096,7 +171096,7 @@ window.TRP_VERSAO = "2026.10.09.22";
                 let cancelado = false;
                 const inicio = Date.now();
 
-                console.log("[Top Reacoes] scan:", {
+                console.log("[Gestor TLGR] scan:", {
                     chatTitle,
                     chatId,
                     backfillAlvo,
@@ -171388,7 +171388,7 @@ window.TRP_VERSAO = "2026.10.09.22";
                     "</div>";
                 conteudo.querySelector(".trp-abrir").addEventListener("click", () => {
                     const url = "https://web.telegram.org/k/#" + idBaseDoChatId(m.chatId) + "?post=" + m.messageId;
-                    console.log("[Top Reacoes] abrindo:", url);
+                    console.log("[Gestor TLGR] abrindo:", url);
                     window.open(url, "_blank");
                 });
                 item.appendChild(conteudo);
@@ -171618,7 +171618,7 @@ window.TRP_VERSAO = "2026.10.09.22";
                 "</div>";
             conteudo.querySelector(".trp-abrir").addEventListener("click", () => {
                 const url = "https://web.telegram.org/k/#" + idBaseDoChatId(m.chatId) + "?post=" + m.messageId;
-                console.log("[Top Reacoes] abrindo:", url);
+                console.log("[Gestor TLGR] abrindo:", url);
                 window.open(url, "_blank");
             });
             item.appendChild(conteudo);

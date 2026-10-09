@@ -1,4 +1,4 @@
-# Historico tecnico - Telegram Top Reacoes
+# Historico tecnico - Gestor TLGR (ex-"Telegram Top Reacoes")
 
 Documento pra quem (humano ou IA) pegar esse projeto depois e entender o que
 foi feito, por que, e onde estao as pegadinhas. Mantido atualizado a cada
@@ -1713,3 +1713,59 @@ pagamento em Stars) - todos ja tinham tratamento de erro, estado de
 botao e feedback visual consistentes.
 
 Versao 2026.10.09.22.
+
+## v2026.10.09.23: renomeia o app pra "Gestor TLGR"
+
+Pedido do usuario: o app nao e mais so o scanner de "top reacoes" (ganhou
+busca global por conteudo, busca por nome, conferidor de link, etc. - ver
+versoes anteriores), entao o nome "Telegram Top Reacoes" ficou
+desatualizado. Decidido: "Gestor TLGR".
+
+Trocado em todo lugar que o usuario VE o nome do app:
+
+- @name do cabecalho ==UserScript== (o que aparece no dashboard do
+  Tampermonkey) - "Gestor TLGR - Painel". @description tambem ajustada pra
+  nao descrever so "scanner de reacoes".
+- Titulo no topo do proprio painel (cabecalho fixo em toda tela) e o botao
+  flutuante que abre/fecha o painel - "Gestor TLGR".
+- deviceModel que a sessao MTProto manda pro Telegram - "Painel Gestor
+  TLGR" (e o que aparece em Configuracoes > Dispositivos, dentro do proprio
+  Telegram do usuario).
+- Prefixo "[Top Reacoes]" dos console.log de debug - "[Gestor TLGR]".
+- Titulo deste documento.
+
+Deliberadamente NAO trocado (risco de perder dado/sessao do usuario sem
+nenhum ganho de nome, ja que nenhum desses e visivel - sao so chaves
+internas):
+- Nome do banco IndexedDB (NOME_BANCO = "TopReacoesTelegram") - trocar
+  criaria um banco NOVO vazio, "perdendo" (na pratica, deixando orfao) tudo
+  que ja foi escaneado ate hoje.
+- Chaves de GM_setValue/GM_getValue (prefixo "trp_": sessao, api_id,
+  api_hash, grupos excluidos, historico de busca) - trocar faria o
+  Tampermonkey esquecer sessao/credenciais/config salvas, like um logout
+  forcado.
+- @namespace do userscript ("telegram-top-reacoes") - nao e visivel em
+  lugar nenhum pro usuario; o Tampermonkey casa a atualizacao pelo
+  @updateURL/@downloadURL (que nao mudou), entao so trocar @name ja
+  atualiza o nome mostrado sem nenhum risco - trocar @namespace tambem
+  seria redundante e so aumentaria o risco a toa.
+- Nome do repositorio no GitHub (continua "TLGR-TR") e a URL de
+  atualizacao - ja usava a abreviacao TLGR desde que foi criado, bate com
+  o nome novo; renomear o repo de verdade e uma decisao a parte (afeta o
+  link remoto/clone local), nao foi pedida e fica em aberto se o usuario
+  quiser.
+- "top reacoes" como nome da FUNCIONALIDADE (o ranking de mensagens com
+  mais reacao, ex. botao "Ver top reacoes") - continua sendo exatamente
+  isso, um recurso entre varios do Gestor TLGR, nao o nome do app.
+
+Revisao desta rodada tambem conferiu (sem achar nada no app ativo,
+painel_build/) o restante do repositorio: README.md, config.example.json,
+dashboard.py/db.py/list_chats.py/scan.py/queries.sql e
+iniciar_servidor_userscript.bat (raiz do repo) ainda documentam/implementam
+a arquitetura antiga (Python + SQLite + servidor Flask local), anterior a
+migracao pra 100% browser-native - esses arquivos nao fazem parte do que
+roda hoje (o Tampermonkey so carrega painel_build/painel_telegram.user.js)
+e nao foram tocados nessa entrega; ficam como candidatos a limpeza/arquivo
+numa proxima rodada, se o usuario quiser.
+
+Versao 2026.10.09.23.
