@@ -2493,9 +2493,16 @@
         statusCota.textContent = "Verificando cota de busca por texto livre...";
         corpo.appendChild(statusCota);
 
+        // Guarda a ultima cota conhecida (ver executarBuscaGlobal) pra
+        // decidir, se a busca em texto livre falhar por cota esgotada, se
+        // vale oferecer o botao de pagar em Stars - sem precisar checar nem
+        // mostrar Stars antes de realmente precisar.
+        let ultimaCota = null;
+
         cliente
             .invoke(new Api.channels.CheckSearchPostsFlood({}))
             .then((cota) => {
+                ultimaCota = cota;
                 if (cota.queryIsFree) {
                     statusCota.textContent = "Busca por texto livre: sem custo agora.";
                     return;
@@ -2573,6 +2580,25 @@
             "text"
         );
         const historicoBuscaGlobal = ligarHistoricoBusca(campoBusca, CHAVE_HISTORICO_BUSCA_GLOBAL);
+
+        // Ordena o que ja foi recebido (todas as paginas ja carregadas ate
+        // agora via "Carregar mais"), sem precisar refazer a busca - pedido
+        // do usuario, pra achar primeiro o canal/grupo maior sobre o
+        // assunto, nao so o post mais recente.
+        const blocoOrdenar = document.createElement("div");
+        blocoOrdenar.style.cssText = "margin-bottom:10px;";
+        const labelOrdenar = document.createElement("label");
+        labelOrdenar.textContent = "Ordenar por: ";
+        labelOrdenar.style.cssText = "color:#8b92a3;font-size:12px;";
+        const selectOrdenarGlobal = document.createElement("select");
+        selectOrdenarGlobal.style.cssText =
+            "background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;padding:4px;font-size:12px;";
+        selectOrdenarGlobal.innerHTML =
+            '<option value="data">Mais recentes</option><option value="membros">Mais membros</option>';
+        labelOrdenar.appendChild(selectOrdenarGlobal);
+        blocoOrdenar.appendChild(labelOrdenar);
+        corpo.appendChild(blocoOrdenar);
+
         const botaoBuscar = botaoAcao(corpo, "Buscar globalmente");
 
         const lista = document.createElement("div");
@@ -2650,10 +2676,15 @@
         // chatId:messageId ja renderizado nesta busca - evita mostrar a
         // mesma mensagem duas vezes se ela bater com mais de uma hashtag.
         const chavesVistasGlobal = new Set();
+        // Guarda TODAS as mensagens ja recebidas (de todas as paginas/termos
+        // ja carregados nesta busca) - pedido do usuario: poder reordenar
+        // por numero de membros do grupo/canal, sem precisar refazer a
+        // chamada de API. "Carregar mais" so acrescenta aqui, a ordenacao e
+        // sempre refeita em cima de tudo que ja foi recebido ate agora.
+        let resultadosAcumulados = [];
+        let houveInexact = false;
 
-        function criarItemResultadoGlobal(m, chatsPorId, termoQueBateu) {
-            const chatId = m.peerId && m.peerId.channelId != null ? String(m.peerId.channelId) : null;
-            const chat = chatId ? chatsPorId.get(chatId) : null;
+        function criarItemResultadoGlobal(m, chat, termoQueBateu) {
             const titulo = (chat && chat.title) || "Canal/grupo desconhecido";
             const username = chat && chat.username ? "@" + chat.username : null;
             const tipo = chat && chat.megagroup ? "grupo" : "canal";
@@ -2733,6 +2764,41 @@
             return termos;
         }
 
+        // Redesenha "lista" inteira a partir de resultadosAcumulados (nunca
+        // refaz chamada de API) - usada tanto no fim de cada busca/pagina
+        // quanto quando o usuario so troca o "Ordenar por" sem buscar de
+        // novo. Reaplicar a ordenacao em cima de TUDO que ja foi recebido
+        // (nao so a pagina mais nova) e o que deixa "mais membros" util
+        // mesmo depois de varios "Carregar mais".
+        function renderizarListaGlobal() {
+            lista.innerHTML = "";
+            if (houveInexact) {
+                lista.insertAdjacentHTML(
+                    "beforeend",
+                    '<div style="color:#8b92a3;font-size:11px;margin-bottom:6px;">Resultado aproximado (o Telegram marcou essa busca como "inexact").</div>'
+                );
+            }
+            const itens = [...resultadosAcumulados];
+            if (selectOrdenarGlobal.value === "membros") {
+                const membrosDe = (item) =>
+                    item.chat && item.chat.participantsCount != null ? item.chat.participantsCount : -1;
+                itens.sort((a, b) => membrosDe(b) - membrosDe(a));
+            }
+            if (!itens.length) {
+                lista.insertAdjacentHTML("beforeend", '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>');
+            } else {
+                for (const item of itens) {
+                    lista.appendChild(criarItemResultadoGlobal(item.m, item.chat, item.termoQueBateu));
+                }
+            }
+            const aindaTemPagina = [...paginasPorTermo.values()].some((p) => p != null);
+            if (aindaTemPagina) {
+                const botaoMais = botaoAcao(lista, "Carregar mais");
+                botaoMais.className = "trp-carregar-mais";
+                botaoMais.addEventListener("click", () => executarBuscaGlobal(true));
+            }
+        }
+
         async function executarBuscaGlobal(continuar) {
             const termoBruto = campoBusca.value.trim();
             if (!termoBruto) {
@@ -2751,19 +2817,22 @@
                     termos.map((t) => [t, { offsetRate: 0, offsetPeer: new Api.InputPeerEmpty({}), offsetId: 0 }])
                 );
                 chavesVistasGlobal.clear();
+                resultadosAcumulados = [];
+                houveInexact = false;
                 historicoBuscaGlobal.registrar(termoBruto);
                 listaLinks.innerHTML = "";
                 linksVistos.clear();
                 tituloLinks.style.display = "none";
             }
 
-            const botaoAntigo = lista.querySelector(".trp-carregar-mais");
-            if (botaoAntigo) botaoAntigo.remove();
-            if (!continuar) lista.innerHTML = "";
-
             botaoBuscar.disabled = true;
             try {
                 let erroDeAlgumTermo = null;
+                // So pode estourar em modo texto livre (hashtag nao tem cota
+                // documentada) - guarda o termo que precisaria pagar Stars
+                // pra continuar, pra oferecer o botao de pagamento depois do
+                // loop (nunca durante, nunca automatico).
+                let termoComCotaEstourada = null;
                 // Sequencial (nao em paralelo) de proposito - varios termos
                 // disparando tudo de uma vez arrisca flood wait mesmo sem a
                 // cota/Premium entrarem no caminho (todo metodo da API tem
@@ -2784,76 +2853,24 @@
                             parametros.query = termoAtual;
                         }
                         const resultado = await cliente.invoke(new Api.channels.SearchPosts(parametros));
-                        const mensagens = resultado.messages || [];
-                        const chatsPorId = new Map();
-                        for (const c of resultado.chats || []) chatsPorId.set(String(c.id), c);
-
-                        if (resultado.inexact && !lista.querySelector(".trp-aviso-inexact")) {
-                            const avisoInexact = document.createElement("div");
-                            avisoInexact.className = "trp-aviso-inexact";
-                            avisoInexact.style.cssText = "color:#8b92a3;font-size:11px;margin-bottom:6px;";
-                            avisoInexact.textContent =
-                                'Resultado aproximado (o Telegram marcou essa busca como "inexact").';
-                            lista.insertBefore(avisoInexact, lista.firstChild);
-                        }
-
-                        for (const m of mensagens) {
-                            const chatIdMsg =
-                                m.peerId && m.peerId.channelId != null ? String(m.peerId.channelId) : "?";
-                            const chaveMsg = chatIdMsg + ":" + m.id;
-                            if (chavesVistasGlobal.has(chaveMsg)) continue;
-                            chavesVistasGlobal.add(chaveMsg);
-
-                            const linksDaMensagem = extrairLinksTelegram(m.message);
-                            if (checkboxSoComLink.checked && !linksDaMensagem.length) continue;
-
-                            lista.appendChild(
-                                criarItemResultadoGlobal(m, chatsPorId, termos.length > 1 ? termoAtual : null)
-                            );
-                            if (checkboxLinks.checked) {
-                                for (const link of linksDaMensagem) criarItemDeLink(link, listaLinks, linksVistos);
-                                if (linksDaMensagem.length) tituloLinks.style.display = "block";
-                            }
-                        }
-
-                        if (mensagens.length) {
-                            const ultima = mensagens[mensagens.length - 1];
-                            const chatIdUltima =
-                                ultima.peerId && ultima.peerId.channelId != null
-                                    ? String(ultima.peerId.channelId)
-                                    : null;
-                            const chatUltima = chatIdUltima ? chatsPorId.get(chatIdUltima) : null;
-                            if (chatUltima && chatUltima.accessHash != null) {
-                                paginasPorTermo.set(termoAtual, {
-                                    offsetRate: resultado.nextRate ?? ultima.date,
-                                    offsetPeer: new Api.InputPeerChannel({
-                                        channelId: chatUltima.id,
-                                        accessHash: chatUltima.accessHash,
-                                    }),
-                                    offsetId: ultima.id,
-                                });
-                            } else {
-                                // sem accessHash do ultimo chat nao da pra montar o
-                                // offsetPeer da proxima pagina - esgota esse termo.
-                                paginasPorTermo.set(termoAtual, null);
-                            }
-                        } else {
-                            paginasPorTermo.set(termoAtual, null);
-                        }
+                        processarRespostaDeBusca(resultado, termoAtual, termos.length);
                     } catch (erro) {
                         paginasPorTermo.set(termoAtual, null);
-                        erroDeAlgumTermo =
-                            (termos.length > 1 ? termoAtual + ": " : "") +
-                            (erro && erro.message ? erro.message : String(erro));
+                        const mensagemErro = erro && erro.message ? erro.message : String(erro);
+                        // So em texto livre: cota diaria gratis acabou e a
+                        // conta nao tem Premium - o unico jeito de continuar
+                        // E PAGANDO em Stars (ver buscarPagandoStars). Modo
+                        // hashtag nunca cai aqui (sem essa restricao).
+                        if (!checkboxHashtag.checked && /PREMIUM_ACCOUNT_REQUIRED/i.test(mensagemErro)) {
+                            termoComCotaEstourada = termoAtual;
+                        } else {
+                            erroDeAlgumTermo =
+                                (termos.length > 1 ? termoAtual + ": " : "") + mensagemErro;
+                        }
                     }
                 }
 
-                if (!lista.childNodes.length) {
-                    lista.innerHTML = erroDeAlgumTermo
-                        ? '<div style="color:#ff6b6b;">Erro: ' + escapeHtml(erroDeAlgumTermo) + "</div>"
-                        : '<div style="color:#8b92a3;">Nada encontrado com esse termo.</div>';
-                    return;
-                }
+                renderizarListaGlobal();
                 if (erroDeAlgumTermo) {
                     lista.insertAdjacentHTML(
                         "beforeend",
@@ -2862,21 +2879,145 @@
                             "</div>"
                     );
                 }
-
-                const aindaTemPagina = [...paginasPorTermo.values()].some((p) => p != null);
-                if (aindaTemPagina) {
-                    const botaoMais = botaoAcao(lista, "Carregar mais");
-                    botaoMais.className = "trp-carregar-mais";
-                    botaoMais.addEventListener("click", () => executarBuscaGlobal(true));
+                if (termoComCotaEstourada) {
+                    mostrarBotaoPagarStars(termoComCotaEstourada);
                 }
             } finally {
                 botaoBuscar.disabled = false;
             }
         }
 
+        // Processa UMA resposta de channels.SearchPosts (pago ou nao) -
+        // compartilhado entre a busca normal (executarBuscaGlobal) e a busca
+        // paga em Stars (buscarPagandoStars), pra garantir que os dois
+        // caminhos atualizam resultadosAcumulados/paginasPorTermo do mesmo
+        // jeito exato.
+        function processarRespostaDeBusca(resultado, termoAtual, totalDeTermos) {
+            const mensagens = resultado.messages || [];
+            const chatsPorId = new Map();
+            for (const c of resultado.chats || []) chatsPorId.set(String(c.id), c);
+
+            if (resultado.inexact) houveInexact = true;
+
+            for (const m of mensagens) {
+                const chatIdMsg = m.peerId && m.peerId.channelId != null ? String(m.peerId.channelId) : "?";
+                const chaveMsg = chatIdMsg + ":" + m.id;
+                if (chavesVistasGlobal.has(chaveMsg)) continue;
+                chavesVistasGlobal.add(chaveMsg);
+
+                const linksDaMensagem = extrairLinksTelegram(m.message);
+                if (checkboxSoComLink.checked && !linksDaMensagem.length) continue;
+
+                resultadosAcumulados.push({
+                    m,
+                    chat: chatsPorId.get(chatIdMsg) || null,
+                    termoQueBateu: totalDeTermos > 1 ? termoAtual : null,
+                });
+                if (checkboxLinks.checked) {
+                    for (const link of linksDaMensagem) criarItemDeLink(link, listaLinks, linksVistos);
+                    if (linksDaMensagem.length) tituloLinks.style.display = "block";
+                }
+            }
+
+            if (mensagens.length) {
+                const ultima = mensagens[mensagens.length - 1];
+                const chatIdUltima = ultima.peerId && ultima.peerId.channelId != null ? String(ultima.peerId.channelId) : null;
+                const chatUltima = chatIdUltima ? chatsPorId.get(chatIdUltima) : null;
+                if (chatUltima && chatUltima.accessHash != null) {
+                    paginasPorTermo.set(termoAtual, {
+                        offsetRate: resultado.nextRate ?? ultima.date,
+                        offsetPeer: new Api.InputPeerChannel({ channelId: chatUltima.id, accessHash: chatUltima.accessHash }),
+                        offsetId: ultima.id,
+                    });
+                } else {
+                    // sem accessHash do ultimo chat nao da pra montar o
+                    // offsetPeer da proxima pagina - esgota esse termo.
+                    paginasPorTermo.set(termoAtual, null);
+                }
+            } else {
+                paginasPorTermo.set(termoAtual, null);
+            }
+        }
+
+        // So chamado por uma acao explicita do usuario (clique no botao com
+        // o valor exato de Stars escrito nele) - NUNCA automatico. A
+        // primeira pagina de uma busca paga e a UNICA que cobra: a doc
+        // oficial diz que toda paginacao seguinte da MESMA busca ("Carregar
+        // mais") volta a ser gratis - por isso isso so roda uma vez por
+        // busca nova, nunca de novo num "Carregar mais".
+        async function buscarPagandoStars(termoAtual, botao) {
+            botao.disabled = true;
+            botao.textContent = "Pagando e buscando...";
+            try {
+                const cotaFresca = await cliente.invoke(new Api.channels.CheckSearchPostsFlood({}));
+                if (cotaFresca.queryIsFree || cotaFresca.remains > 0) {
+                    // Sobrou cota gratis entre a tentativa anterior e agora
+                    // (pouco provavel, mas possivel) - nao cobra Stars a
+                    // toa, so repete a busca normal.
+                    paginasPorTermo.set(termoAtual, { offsetRate: 0, offsetPeer: new Api.InputPeerEmpty({}), offsetId: 0 });
+                    const resultado = await cliente.invoke(
+                        new Api.channels.SearchPosts({
+                            offsetRate: 0,
+                            offsetPeer: new Api.InputPeerEmpty({}),
+                            offsetId: 0,
+                            limit: 20,
+                            query: termoAtual,
+                        })
+                    );
+                    processarRespostaDeBusca(resultado, termoAtual, 1);
+                } else {
+                    const resultado = await cliente.invoke(
+                        new Api.channels.SearchPosts({
+                            offsetRate: 0,
+                            offsetPeer: new Api.InputPeerEmpty({}),
+                            offsetId: 0,
+                            limit: 20,
+                            query: termoAtual,
+                            allowPaidStars: cotaFresca.starsAmount,
+                        })
+                    );
+                    processarRespostaDeBusca(resultado, termoAtual, 1);
+                }
+                renderizarListaGlobal();
+            } catch (erro) {
+                lista.insertAdjacentHTML(
+                    "beforeend",
+                    '<div style="color:#ff6b6b;font-size:11px;">Erro ao pagar e buscar: ' +
+                        escapeHtml(erro && erro.message ? erro.message : String(erro)) +
+                        "</div>"
+                );
+                botao.disabled = false;
+                botao.textContent =
+                    ultimaCota && ultimaCota.starsAmount != null
+                        ? `Pagar ${ultimaCota.starsAmount} Stars e buscar mesmo assim`
+                        : "Pagar em Stars e buscar mesmo assim";
+            }
+        }
+
+        function mostrarBotaoPagarStars(termoAtual) {
+            const bloco = document.createElement("div");
+            bloco.style.cssText = "margin-top:8px;padding-top:8px;border-top:1px solid #2a2f3a;";
+            bloco.innerHTML =
+                '<div style="color:#e0a93a;font-size:11px;margin-bottom:4px;">Cota diaria gratis de texto livre acabou hoje.</div>';
+            const botaoPagar = document.createElement("button");
+            botaoPagar.textContent =
+                ultimaCota && ultimaCota.starsAmount != null
+                    ? `Pagar ${ultimaCota.starsAmount} Stars e buscar mesmo assim`
+                    : "Pagar em Stars e buscar mesmo assim";
+            botaoPagar.style.cssText =
+                "width:100%;padding:8px;border:none;border-radius:6px;background:#e0a93a;color:#1a1a1a;" +
+                "font-weight:600;cursor:pointer;";
+            bloco.appendChild(botaoPagar);
+            lista.appendChild(bloco);
+            botaoPagar.addEventListener("click", () => buscarPagandoStars(termoAtual, botaoPagar));
+        }
+
         botaoBuscar.addEventListener("click", () => executarBuscaGlobal(false));
         campoBusca.addEventListener("keydown", (ev) => {
             if (ev.key === "Enter") executarBuscaGlobal(false);
+        });
+        selectOrdenarGlobal.addEventListener("change", () => {
+            if (resultadosAcumulados.length) renderizarListaGlobal();
         });
     }
 

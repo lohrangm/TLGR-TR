@@ -1639,3 +1639,32 @@ Implementado:
   sair com os links de grupo relacionados mencionados em posts publicos".
 
 Versao 2026.10.09.20.
+
+## v2026.10.09.21: ordenar busca por numero de membros, pagar Stars pra continuar buscando por texto livre
+
+Dois itens que ja estavam na lista de pendencias desde conversas anteriores,
+adiantados a pedido do usuario ("segue adiantando o que falta").
+
+- Novo seletor "Ordenar por: Mais recentes / Mais membros" na busca por
+  conteudo (Busca avancada). Por baixo, a lista de resultados agora guarda
+  TODAS as mensagens ja recebidas (resultadosAcumulados, inclusive de
+  paginas anteriores via "Carregar mais") em vez de so acrescentar direto
+  na tela - trocar o criterio de ordenacao so redesenha a partir do que ja
+  foi recebido, sem nenhuma chamada de API nova. criarItemResultadoGlobal()
+  foi simplificada pra receber o chat ja resolvido (em vez do mapa inteiro
+  chatsPorId), e o merge de cada resposta da API (extrair mensagens,
+  atualizar cursor de paginacao) virou uma funcao propria
+  (processarRespostaDeBusca), reaproveitada tambem pelo pagamento em Stars
+  abaixo.
+- Busca por texto livre: quando a cota diaria gratis acaba (erro
+  PREMIUM_ACCOUNT_REQUIRED da API) a tela agora mostra um botao com o valor
+  exato em Stars ("Pagar N Stars e buscar mesmo assim"), em vez de so
+  mostrar erro e parar. So dispara a chamada paga com uma acao explicita do
+  usuario (clique no botao, com o preco escrito nele) - nunca automatico.
+  Confere a cota de novo na hora (channels.CheckSearchPostsFlood) antes de
+  decidir se cobra mesmo, pra nao gastar Stars a toa se sobrou cota gratis
+  entre uma tentativa e outra. Segundo a doc oficial, so a PRIMEIRA pagina
+  de uma busca paga cobra - "Carregar mais" da mesma busca continua gratis
+  depois, por isso esse fluxo so roda uma vez por busca nova.
+
+Versao 2026.10.09.21.
