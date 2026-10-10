@@ -1972,3 +1972,48 @@ lista por estar desmarcado - antes a lista so encolhia silenciosamente,
 sem nenhuma pista de que havia mais chats escaneados alem dos visiveis.
 
 Versao 2026.10.10.1.
+
+## v2026.10.10.2: corrige "Top reacoes" e "Buscar mensagens" ignorando grupo desmarcado em "Configurar grupos"
+
+Bug real relatado pelo usuario pelo uso de verdade: "desmarquei um grupo
+que estava poluindo o top reacoes e ele nao foi removido... ainda vejo as
+reacoes desse grupo como top reacoes, e nao deveria acontecer pois eu
+desmarquei".
+
+### Causa raiz
+
+`carregarGruposExcluidos()` monta o Set `excluidos` em `telaResultados()` e
+`telaBusca()`, mas ele so era usado pra filtrar o `<select>` de grupo
+(dropdown) e a tabela de status (`renderizarTabelaChats`) - nunca era
+passado pras funcoes que de fato consultam o IndexedDB (`buscarTop`,
+`buscarTopPorData`, `buscarTexto`). Essas funcoes so sabiam filtrar por um
+`chatId` especifico (quando escolhido no dropdown); sem `chatId` escolhido
+("Todos os grupos", o modo agregado), nao existia nenhuma nocao de grupo
+excluido. Como um grupo excluido nunca pode ser ESCOLHIDO no dropdown (ja
+sai filtrado de la), o bug so aparecia no modo "Todos os grupos" - exatamente
+o relato do usuario.
+
+### Correcao
+
+`buscarTop`, `buscarTopPorData` e `buscarTexto` ganharam um parametro
+`excluidos` (Set opcional) e um `chatNaoExcluido = !excluidos ||
+!excluidos.has(valor.chatId)` dobrado na condicao de match de cada uma. Os
+dois pontos de chamada (`telaResultados()`.atualizarLista() e
+`telaBusca()`.executarBuscaPorDentro()) passaram a repassar o `excluidos`
+que ja calculavam antes (so pro dropdown) tambem pra essas funcoes.
+
+### Verificacao
+
+`test_indexeddb_logic.mjs` mantem copias proprias (coladas a mao) dessas
+tres funcoes, ja que `painel_logic.js` e uma IIFE sem export - rodar o
+teste sem atualizar as copias daria "passou" sem testar nada do fix de
+verdade. As tres copias foram espelhadas com a mesma mudanca, e novos casos
+de teste foram adicionados especificamente pra provar o comportamento (nao
+so "nao quebrou o resto"): grupo "B" marcado como excluido, `buscarTop`/
+`buscarTopPorData`/`buscarTexto` chamados com `chatId: null` (modo "Todos os
+grupos") e `excluidos: new Set(["B"])` - confirma que nenhuma mensagem do
+grupo B aparece e que o grupo A continua aparecendo normalmente; e o
+inverso (sem passar `excluidos`) confirma que o comportamento default nao
+mudou. `node --check` e a suite inteira (com os novos casos) passaram.
+
+Versao 2026.10.10.2.

@@ -276,14 +276,24 @@
     // visual/de recorte, igual ao de buscarTexto() - nao afeta o que fica
     // salvo, so o que aparece nesta lista.
     //
+    // "excluidos" (Set de chatId, opcional): chat desmarcado em "Configurar
+    // grupos" so saia do SELETOR de grupo (bug reportado pelo usuario -
+    // mensagem de um chat excluido continuava contando pro ranking "Todos
+    // os grupos" do "Ver top reacoes", porque o IndexedDB guarda a mensagem
+    // pra sempre, so o seletor filtrava "excluidos", nunca a consulta em si).
+    // So importa de verdade quando chatId e null ("Todos") - com um chat
+    // especifico escolhido ja nao tem como ele estar em excluidos (nao
+    // aparece mais no seletor pra ser escolhido), mas o teste nao atrapalha
+    // nesse caso mesmo assim.
+    //
     // ordenarPor="data" usa um caminho BEM mais caro (buscarTopPorData, logo
     // abaixo) - esse aqui (o padrao, ordenarPor="reacoes" ou omitido) e
     // rapido porque o indice ja vem ordenado por reacoes: da pra parar assim
     // que acha um valor abaixo do minimo, sem visitar o resto. Ordenar por
     // data perde essa vantagem (ver comentario em buscarTopPorData).
-    function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte, ordenarPor }) {
+    function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte, ordenarPor, excluidos }) {
         if (ordenarPor === "data") {
-            return buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte });
+            return buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte, excluidos });
         }
         return new Promise((resolve, reject) => {
             const resultados = [];
@@ -305,7 +315,8 @@
                 }
                 const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
                 const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
-                if ((!chatId || valor.chatId === chatId) && bateData) {
+                const chatNaoExcluido = !excluidos || !excluidos.has(valor.chatId);
+                if ((!chatId || valor.chatId === chatId) && bateData && chatNaoExcluido) {
                     resultados.push(valor);
                 }
                 cursor.continue();
@@ -314,16 +325,17 @@
         });
     }
 
-    // Mesmo filtro de buscarTop(), mas ordenado por data (mais recente
-    // primeiro) em vez de reacoes. Sem indice por data, entao nao da pra usar
-    // o truque de "parar assim que passar do minimo" (o indice por_reacoes
-    // nao esta em ordem de data) - percorre tudo que bater com chat/periodo
-    // ate uma trava de seguranca, junta num array e so ai ordena e corta pro
-    // "limite". Mais caro que o caminho padrao, principalmente com "Todos os
-    // grupos" e minimo baixo (quase toda mensagem bate) - mesma trava
-    // (LIMITE_VISITAS) e mesmo espirito do full-scan que buscarTexto() ja
-    // fazia pra busca por palavra-chave.
-    function buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte }) {
+    // Mesmo filtro de buscarTop() (incluindo "excluidos", ver comentario la),
+    // mas ordenado por data (mais recente primeiro) em vez de reacoes. Sem
+    // indice por data, entao nao da pra usar o truque de "parar assim que
+    // passar do minimo" (o indice por_reacoes nao esta em ordem de data) -
+    // percorre tudo que bater com chat/periodo ate uma trava de seguranca,
+    // junta num array e so ai ordena e corta pro "limite". Mais caro que o
+    // caminho padrao, principalmente com "Todos os grupos" e minimo baixo
+    // (quase toda mensagem bate) - mesma trava (LIMITE_VISITAS) e mesmo
+    // espirito do full-scan que buscarTexto() ja fazia pra busca por
+    // palavra-chave.
+    function buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte, excluidos }) {
         return new Promise((resolve, reject) => {
             const resultados = [];
             let visitados = 0;
@@ -341,7 +353,8 @@
                 const valor = cursor.value;
                 const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
                 const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
-                if ((valor.reactionTotal || 0) >= minimo && bateData) {
+                const chatNaoExcluido = !excluidos || !excluidos.has(valor.chatId);
+                if ((valor.reactionTotal || 0) >= minimo && bateData && chatNaoExcluido) {
                     resultados.push(valor);
                 }
                 cursor.continue();
@@ -376,7 +389,12 @@
     // paginacao (chamar nessa funcao de novo com "limite" maior) em vez de
     // so aumentar um limite fixo de uma vez: ela deixa o cursor avançar o
     // suficiente pra sair do primeiro grupo e alcançar os demais.
-    function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor, dataDe, dataAte }) {
+    //
+    // "excluidos" (Set de chatId, opcional): mesmo raciocinio de buscarTop()
+    // - chat desmarcado em "Configurar grupos" tinha suas mensagens ja
+    // salvas continuando a aparecer aqui com "Todos os grupos" selecionado,
+    // porque so o seletor de grupo filtrava "excluidos", nunca a consulta.
+    function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor, dataDe, dataAte, excluidos }) {
         return new Promise((resolve, reject) => {
             const palavras = normalizarTexto(termo)
                 .split(/\s+/)
@@ -423,7 +441,8 @@
                 const bateAlgumaPalavra = palavras.length === 0 || palavras.some((p) => textoNormalizado.includes(p));
                 const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
                 const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
-                if ((valor.reactionTotal || 0) >= minimoReacoes && bateAlgumaPalavra && bateData) {
+                const chatNaoExcluido = !excluidos || !excluidos.has(valor.chatId);
+                if ((valor.reactionTotal || 0) >= minimoReacoes && bateAlgumaPalavra && bateData && chatNaoExcluido) {
                     resultados.push(valor);
                 }
                 cursor.continue();
@@ -2199,7 +2218,15 @@
             const dataDe = inputDataDe.value || null;
             const dataAte = inputDataAte.value || null;
             const ordenarPor = selectOrdenar.value;
-            const mensagens = await buscarTop(db, { chatId, minimo, limite: limiteAtual, dataDe, dataAte, ordenarPor });
+            const mensagens = await buscarTop(db, {
+                chatId,
+                minimo,
+                limite: limiteAtual,
+                dataDe,
+                dataAte,
+                ordenarPor,
+                excluidos,
+            });
             statusCarregando.textContent = "";
             if (!mensagens.length) {
                 lista.innerHTML = '<div style="color:#8b92a3;">Nenhuma mensagem encontrada com esse filtro.</div>';
@@ -2583,6 +2610,7 @@
                 ordenarPor,
                 dataDe,
                 dataAte,
+                excluidos,
             });
 
             let novasDoServidor = [];

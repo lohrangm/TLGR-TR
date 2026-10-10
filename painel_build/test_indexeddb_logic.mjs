@@ -84,7 +84,7 @@ function normalizarTexto(texto) {
         .toLowerCase();
 }
 
-function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor, dataDe, dataAte }) {
+function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor, dataDe, dataAte, excluidos }) {
     return new Promise((resolve, reject) => {
         const palavras = normalizarTexto(termo)
             .split(/\s+/)
@@ -120,7 +120,8 @@ function buscarTexto(db, { termo, chatId, minimo, limite, ordenarPor, dataDe, da
             const bateAlgumaPalavra = palavras.length === 0 || palavras.some((p) => textoNormalizado.includes(p));
             const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
             const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
-            if ((valor.reactionTotal || 0) >= minimoReacoes && bateAlgumaPalavra && bateData) {
+            const chatNaoExcluido = !excluidos || !excluidos.has(valor.chatId);
+            if ((valor.reactionTotal || 0) >= minimoReacoes && bateAlgumaPalavra && bateData && chatNaoExcluido) {
                 resultados.push(valor);
             }
             cursor.continue();
@@ -151,9 +152,9 @@ function contarMensagensDoChat(db, chatId) {
     });
 }
 
-function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte, ordenarPor }) {
+function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte, ordenarPor, excluidos }) {
     if (ordenarPor === "data") {
-        return buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte });
+        return buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte, excluidos });
     }
     return new Promise((resolve, reject) => {
         const resultados = [];
@@ -175,7 +176,8 @@ function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte, ordenarPor }) 
             }
             const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
             const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
-            if ((!chatId || valor.chatId === chatId) && bateData) {
+            const chatNaoExcluido = !excluidos || !excluidos.has(valor.chatId);
+            if ((!chatId || valor.chatId === chatId) && bateData && chatNaoExcluido) {
                 resultados.push(valor);
             }
             cursor.continue();
@@ -185,8 +187,9 @@ function buscarTop(db, { chatId, minimo, limite, dataDe, dataAte, ordenarPor }) 
 }
 
 // Mirror de buscarTopPorData() em painel_logic.js - mesmo filtro de
-// buscarTop(), ordenado por data (mais recente primeiro) em vez de reacoes.
-function buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte }) {
+// buscarTop() (incluindo "excluidos"), ordenado por data (mais recente
+// primeiro) em vez de reacoes.
+function buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte, excluidos }) {
     return new Promise((resolve, reject) => {
         const resultados = [];
         let visitados = 0;
@@ -204,7 +207,8 @@ function buscarTopPorData(db, { chatId, minimo, limite, dataDe, dataAte }) {
             const valor = cursor.value;
             const dataDaMensagem = (valor.dateUtc || "").slice(0, 10);
             const bateData = (!dataDe || dataDaMensagem >= dataDe) && (!dataAte || dataDaMensagem <= dataAte);
-            if ((valor.reactionTotal || 0) >= minimo && bateData) {
+            const chatNaoExcluido = !excluidos || !excluidos.has(valor.chatId);
+            if ((valor.reactionTotal || 0) >= minimo && bateData && chatNaoExcluido) {
                 resultados.push(valor);
             }
             cursor.continue();
@@ -301,6 +305,36 @@ const top9 = await buscarTop(db, {
 assert(
     top9.length === 3 && top9.map((m) => m.key).join(",") === "B:1,A:3,A:2",
     "ordenarPor='data' + periodo respeita os dois filtros juntos (veio " + top9.map((m) => m.key).join(",") + ")"
+);
+
+// ---- excluidos - FIX: grupo desmarcado em "Configurar grupos" nao pode
+// continuar aparecendo no "Todos os grupos" (bug relatado pelo usuario:
+// desmarcou um grupo que estava poluindo o top reacoes e as mensagens dele
+// continuaram aparecendo mesmo assim) ----
+const excluidosB = new Set(["B"]);
+
+const topComExclusao = await buscarTop(db, { chatId: null, minimo: 1, limite: 10, excluidos: excluidosB });
+assert(
+    topComExclusao.length === 3 && topComExclusao.every((m) => m.chatId === "A"),
+    "FIX: buscarTop com excluidos=['B'] no 'Todos os grupos' so traz as 3 mensagens do grupo A (veio " + topComExclusao.map((m) => m.key).join(",") + ")"
+);
+assert(
+    !topComExclusao.some((m) => m.chatId === "B"),
+    "FIX: nenhuma mensagem do grupo B (excluido) aparece no top geral"
+);
+
+const topPorDataComExclusao = await buscarTop(db, { chatId: null, minimo: 1, limite: 10, ordenarPor: "data", excluidos: excluidosB });
+assert(
+    topPorDataComExclusao.length === 3 && topPorDataComExclusao.every((m) => m.chatId === "A"),
+    "FIX: buscarTopPorData (chamada via ordenarPor='data') tambem respeita excluidos (veio " + topPorDataComExclusao.map((m) => m.key).join(",") + ")"
+);
+
+// sem excluidos, continua trazendo os 2 grupos - prova que o filtro so age
+// quando passado, e nao quebrou o comportamento default
+const topSemExclusao = await buscarTop(db, { chatId: null, minimo: 1, limite: 10 });
+assert(
+    topSemExclusao.some((m) => m.chatId === "B"),
+    "sem o parametro excluidos, mensagens do grupo B continuam aparecendo normalmente (nao quebrou o default)"
 );
 
 // ---- contarMensagensDoChat - base da tabela "o que ja esta salvo" ----
@@ -452,6 +486,25 @@ const soDataDe = await buscarTexto(db, { termo: "arlene lee", chatId: "A", limit
 assert(
     soDataDe.length === 1 && soDataDe[0].messageId === 8,
     "so dataDe (sem dataAte) traz so quem bate no termo a partir dali em diante (veio " + soDataDe.length + ")"
+);
+
+// ---- buscarTexto com excluidos - mesmo FIX do top reacoes, agora em
+// "Buscar mensagens" (que usa os mesmos grupos excluidos de "Configurar
+// grupos") ----
+const buscaComExclusao = await buscarTexto(db, { termo: "", chatId: null, limite: 50, excluidos: excluidosB });
+assert(
+    !buscaComExclusao.some((m) => m.chatId === "B"),
+    "FIX: buscarTexto com excluidos=['B'] nao traz nenhuma mensagem do grupo B"
+);
+assert(
+    buscaComExclusao.some((m) => m.chatId === "A"),
+    "FIX: buscarTexto com excluidos=['B'] continua trazendo as mensagens do grupo A normalmente"
+);
+
+const buscaSemExclusao = await buscarTexto(db, { termo: "", chatId: null, limite: 50 });
+assert(
+    buscaSemExclusao.some((m) => m.chatId === "B"),
+    "sem o parametro excluidos, buscarTexto continua trazendo o grupo B normalmente (nao quebrou o default)"
 );
 
 // ---- idBaseDoChatId (copiada de painel_logic.js) ----
