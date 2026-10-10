@@ -1896,3 +1896,79 @@ certo. Cada tela testa o campo certo pro tipo de objeto que sua API
 realmente pode devolver.
 
 Versao 2026.10.09.25.
+
+## v2026.10.10.1: seis pontos de melhoria levantados pelo usuario, todos aplicados
+
+Usuario testou a conta de verdade (entrou em varios grupos novos pra ver se
+apareciam sozinhos) e pediu uma lista de pontos de melhoria "que eu nao
+enxerguei com meus olhos aqui". Depois de uma rodada de perguntas e
+respostas (ver abaixo) pediu pra aplicar todos.
+
+### 0. Grupo novo nao aparecendo em "Configurar grupos" - nao confirmado como bug
+
+Investigado via leitura de codigo (iterTodosOsDialogs(), e
+node_modules/teleproto/client/dialogs.js e requestIter.js por baixo): a
+busca de dialogs e sempre ao vivo (hash:0, nunca aceita "sem mudanca" do
+Telegram) e sem limite artificial de paginacao - pelo codigo, um grupo novo
+deveria aparecer sozinho, sem nenhum botao. Nao foi possivel confirmar nem
+descartar o problema sem acesso a conta real; hipoteses levantadas pro
+usuario (lista grande sem busca pra confirmar visualmente, atraso normal do
+proprio Telegram em propagar uma entrada muito recente) em vez de uma
+correcao de codigo. O item 1 abaixo (busca na lista) ataca a hipotese mais
+provavel (dificuldade de achar visualmente, nao ausencia de verdade).
+
+### 1 e 2. Campo de busca + contador em "Configurar grupos"
+
+Lista inteira (grupos + orfaos) agora fica guardada em memoria
+(todosOsItens) e uma funcao renderizarLista(filtro) redesenha so o que bate
+com o texto digitado, atualizando um contador ("X de Y grupos/canais" ou
+"Y grupos/canais encontrados" sem filtro). Estado de marcado/desmarcado
+nunca se perde entre redesenhos porque mora no Set "excluidos" (e no
+GM_setValue por tras dele), nunca no DOM.
+
+### 3. Backup/restauracao dos dados escaneados
+
+Tudo que o scan acha mora so no IndexedDB do navegador, sem nenhuma copia
+em servidor - perfil do Chrome resetado ou cache limpo apaga tudo pra
+sempre. Nova tela "Backup dos dados" (telaBackup(), novo item no menu
+principal): exporta chats+mensagens pra um .json (Blob + link de download,
+sem precisar de nenhum GM_* novo) e importa de volta escolhendo um arquivo.
+Importar faz put() registro por registro - nunca apaga o que ja esta no
+banco e nao esta no arquivo, so sobrescreve registros com a mesma chave -
+por isso nao tem (nem precisa de) nenhuma confirmacao tipo "isso vai apagar
+tudo", so um aviso explicando esse comportamento antes do botao.
+
+### 4. FLOOD_WAIT longo durante o scan
+
+A lib (teleproto) ja espera sozinha por ate 60s de flood wait
+(floodSleepThreshold padrao dela) antes de devolver erro pra gente -
+confirmado lendo node_modules/teleproto/client/users.js e
+errors/RPCErrorList.js (FloodWaitError, propriedade .seconds). Acima disso
+ela desiste e o erro subia direto pra quebrar o scan inteiro, exigindo
+clicar "Iniciar scan" de novo manualmente (o checkpoint ja garantia que
+retomava certo, so que nao sozinho). Fase 1 e fase 2 de escanearTudo()
+agora rodam dentro de um laco de retry: se der erro de flood wait longo
+(deteccao por duck-typing em erro.seconds, ja que a classe FloodWaitError
+nao e exposta pelo bridge - ver entry.js - e expor exigiria mexer no
+bundle), mostra contagem regressiva no status e tenta de novo sozinho
+quando passa, sem perder nada (textoCompletoAte/lastScannedMessageId ja
+avancaram em memoria a cada mensagem salva). Qualquer outro erro continua
+propagando exatamente como sempre propagou.
+
+### 5. Progresso geral do scan "Todos" (grupo X de Y)
+
+escanearTudo() agora materializa a lista inteira de dialogs a escanear
+ANTES de comecar (mesmo custo de API de sempre, so muda a ordem: pagina o
+GetDialogs inteiro de uma vez em vez de intercalado com o escaneamento),
+o que da o total pra prefixar cada mensagem de status com "(grupo X de Y)"
+- so aparece com "Todos" (mais de um grupo), nao faz sentido escaneando um
+grupo especifico so.
+
+### 6. Nota de grupos ocultos na tabela de status
+
+renderizarTabelaChats() mostra agora "+N grupo(s) oculto(s) (desmarcado(s)
+em "Configurar grupos")" quando algum chat ja escaneado esta fora da
+lista por estar desmarcado - antes a lista so encolhia silenciosamente,
+sem nenhuma pista de que havia mais chats escaneados alem dos visiveis.
+
+Versao 2026.10.10.1.

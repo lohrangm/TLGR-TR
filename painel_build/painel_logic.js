@@ -213,6 +213,20 @@
         });
     }
 
+    // Todas as mensagens salvas, de todos os chats - usado so pelo backup
+    // (telaBackup()), nunca pelas telas do dia-a-dia (que sempre filtram por
+    // chat/termo/periodo via indice, bem mais barato). Pode ser uma lista
+    // grande (um scan de meses em varios grupos facilmente passa de
+    // dezenas de milhares de mensagens) - aceitavel aqui porque so roda
+    // quando o usuario pede um export, nao em background.
+    function listarTodasMensagens(db) {
+        return new Promise((resolve, reject) => {
+            const pedido = transacao(db, "mensagens", "readonly").getAll();
+            pedido.onsuccess = () => resolve(pedido.result || []);
+            pedido.onerror = () => reject(pedido.error);
+        });
+    }
+
     function salvarMensagem(db, registro) {
         return new Promise((resolve, reject) => {
             const pedido = transacao(db, "mensagens", "readwrite").put(registro);
@@ -1147,6 +1161,9 @@
             const botaoHistorico = botaoAcao(corpo, "Historico de buscas (gerenciar/limpar)");
             botaoHistorico.style.background = "#2a2f3a";
             botaoHistorico.addEventListener("click", () => telaHistoricoBusca());
+            const botaoBackup = botaoAcao(corpo, "Backup dos dados (exportar/importar)");
+            botaoBackup.style.background = "#2a2f3a";
+            botaoBackup.addEventListener("click", () => telaBackup());
             atualizarVisibilidadeSair(true);
         } catch (erro) {
             textoAviso(corpo, "Erro ao carregar a conta: " + (erro && erro.message ? erro.message : erro), "#ff6b6b");
@@ -1223,6 +1240,22 @@
             );
         corpo.appendChild(aviso);
 
+        // Campo de filtro + contador ficam escondidos ate a lista carregar
+        // (nao tem o que filtrar/contar antes disso) - pedido do usuario,
+        // que com a conta cheia de grupos nao conseguia confirmar de
+        // relance se um grupo especifico (que ele tinha acabado de entrar)
+        // estava mesmo nessa lista ou nao.
+        const blocoFiltro = document.createElement("div");
+        blocoFiltro.style.cssText = "display:none;margin-bottom:8px;";
+        blocoFiltro.innerHTML =
+            '<input id="trp-filtro-grupos" type="text" placeholder="Filtrar por nome..." ' +
+            'style="width:100%;background:#0c0e12;color:#e6e8ec;border:1px solid #2a2f3a;border-radius:6px;' +
+            'padding:8px;box-sizing:border-box;margin-bottom:4px;">' +
+            '<div id="trp-contador-grupos" style="color:#8b92a3;font-size:11px;"></div>';
+        corpo.appendChild(blocoFiltro);
+        const campoFiltro = blocoFiltro.querySelector("#trp-filtro-grupos");
+        const contador = blocoFiltro.querySelector("#trp-contador-grupos");
+
         const lista = document.createElement("div");
         lista.style.cssText = "color:#8b92a3;";
         lista.textContent = "Carregando lista de grupos...";
@@ -1245,11 +1278,19 @@
             const chatsSalvos = await listarChats(db);
             const orfaos = chatsSalvos.filter((c) => !idsAtuais.has(c.chatId));
 
-            lista.innerHTML = "";
             if (!grupos.length && !orfaos.length) {
                 lista.textContent = "Nenhum grupo/canal encontrado nessa conta.";
                 return;
             }
+
+            const todosOsItens = [
+                ...grupos.map((g) => ({ chatId: g.chatId, titulo: g.titulo, origemDesconhecida: false })),
+                ...orfaos.map((c) => ({
+                    chatId: c.chatId,
+                    titulo: c.chatTitle || c.chatId,
+                    origemDesconhecida: true,
+                })),
+            ];
 
             const criarLinha = (chatId, titulo, origemDesconhecida) => {
                 const linha = document.createElement("div");
@@ -1273,8 +1314,30 @@
                 lista.appendChild(linha);
             };
 
-            for (const g of grupos) criarLinha(g.chatId, g.titulo, false);
-            for (const c of orfaos) criarLinha(c.chatId, c.chatTitle || c.chatId, true);
+            // Reaplicado a cada letra digitada no filtro - "excluidos" (e os
+            // proprios checkboxes, atraves dele) nao se perde entre
+            // redesenhos porque o estado mora no Set/no storage, nunca no
+            // DOM: cada redesenho so LE excluidos.has(chatId) de novo pra
+            // decidir o estado inicial do quadrado.
+            function renderizarLista(filtro) {
+                lista.innerHTML = "";
+                const termo = filtro.trim().toLowerCase();
+                const itensFiltrados = termo
+                    ? todosOsItens.filter((item) => item.titulo.toLowerCase().includes(termo))
+                    : todosOsItens;
+                contador.textContent = termo
+                    ? `${itensFiltrados.length} de ${todosOsItens.length} grupos/canais`
+                    : `${todosOsItens.length} grupos/canais encontrados`;
+                if (!itensFiltrados.length) {
+                    lista.innerHTML = '<div style="color:#8b92a3;font-size:12px;">Nenhum grupo/canal bate com esse filtro.</div>';
+                    return;
+                }
+                for (const item of itensFiltrados) criarLinha(item.chatId, item.titulo, item.origemDesconhecida);
+            }
+
+            blocoFiltro.style.display = "block";
+            renderizarLista("");
+            campoFiltro.addEventListener("input", () => renderizarLista(campoFiltro.value));
         } catch (erro) {
             lista.textContent = "Erro ao carregar grupos: " + (erro && erro.message ? erro.message : erro);
         }
@@ -1356,6 +1419,128 @@
         renderizarBloco('Historico de "Busca avancada"', CHAVE_HISTORICO_BUSCA_GLOBAL);
     }
 
+    // ---- Tela de configuracao: backup dos dados escaneados ----
+
+    // Tudo que o scan acha mora so no IndexedDB deste navegador - sem
+    // nenhuma copia em servidor nenhum. Perfil do Chrome resetado ou cache
+    // do site limpo apaga tudo pra sempre, sem jeito de recuperar. Exporta
+    // chats+mensagens num arquivo .json que o usuario guarda onde quiser, e
+    // importa de volta quando precisar. Importar faz put() registro por
+    // registro - nunca apaga nada que ja esta no banco e nao esta no
+    // arquivo, so sobrescreve registros com a mesma chave (mesmo chatId ou
+    // mesma mensagem) - por isso e seguro restaurar por cima de um banco
+    // que ja tem dado, sem precisar de nenhuma confirmacao tipo "isso vai
+    // apagar tudo".
+    function telaBackup() {
+        definirTituloTela("Backup dos dados");
+        const corpo = corpoDoPainel();
+        botaoVoltar(corpo);
+
+        const aviso = document.createElement("div");
+        aviso.style.cssText = "display:flex;align-items:center;gap:4px;color:#8b92a3;margin-bottom:14px;";
+        aviso.innerHTML =
+            '<span>Os dados do scan moram so neste navegador - exporta pra nao perder.</span>' +
+            criarIconeInfoHtml(
+                'Tudo que o scan encontra (mensagens, reacoes, chats) fica so no IndexedDB deste navegador, sem copia em nenhum servidor. Se o perfil do Chrome for resetado ou o cache do site for limpo, perde tudo pra sempre. Exporta de vez em quando (ou antes de qualquer mudanca grande no computador/navegador) e guarda o arquivo em algum lugar seguro. Importar um arquivo de volta nunca apaga dado que ja esta no banco - so sobrescreve o que tiver a mesma chave, entao e seguro restaurar por cima de um banco que ja tem coisa.'
+            );
+        corpo.appendChild(aviso);
+
+        const botaoExportar = botaoAcao(corpo, "Exportar backup (.json)");
+        const statusExportar = document.createElement("div");
+        statusExportar.style.cssText = "color:#8b92a3;font-size:12px;margin:-4px 0 14px;";
+        corpo.appendChild(statusExportar);
+
+        botaoExportar.addEventListener("click", async () => {
+            botaoExportar.disabled = true;
+            statusExportar.textContent = "Lendo banco local...";
+            try {
+                const db = await abrirBanco();
+                const [chats, mensagens] = await Promise.all([listarChats(db), listarTodasMensagens(db)]);
+                const backup = {
+                    formato: "gestor-tlgr-backup",
+                    versaoApp: VERSAO_PAINEL,
+                    geradoEm: new Date().toISOString(),
+                    chats,
+                    mensagens,
+                };
+                const blob = new Blob([JSON.stringify(backup)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = "gestor-tlgr-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+                link.click();
+                URL.revokeObjectURL(url);
+                statusExportar.textContent = `Exportado: ${chats.length} grupo(s)/canal(is), ${mensagens.length} mensagem(ns).`;
+            } catch (erro) {
+                statusExportar.textContent = "Erro ao exportar: " + (erro && erro.message ? erro.message : erro);
+            } finally {
+                botaoExportar.disabled = false;
+            }
+        });
+
+        const tituloImportar = document.createElement("div");
+        tituloImportar.style.cssText = "color:#8b92a3;margin:18px 0 6px;font-weight:600;";
+        tituloImportar.textContent = "Restaurar de um backup";
+        corpo.appendChild(tituloImportar);
+
+        const campoArquivo = document.createElement("input");
+        campoArquivo.type = "file";
+        campoArquivo.accept = ".json,application/json";
+        campoArquivo.style.display = "none";
+        corpo.appendChild(campoArquivo);
+
+        const botaoImportar = botaoAcao(corpo, "Escolher arquivo de backup...");
+        const statusImportar = document.createElement("div");
+        statusImportar.style.cssText = "color:#8b92a3;font-size:12px;margin-top:-4px;white-space:pre-line;";
+        corpo.appendChild(statusImportar);
+
+        botaoImportar.addEventListener("click", () => campoArquivo.click());
+
+        campoArquivo.addEventListener("change", async () => {
+            const arquivo = campoArquivo.files && campoArquivo.files[0];
+            campoArquivo.value = ""; // permite escolher o mesmo arquivo de novo depois, se precisar
+            if (!arquivo) return;
+
+            botaoImportar.disabled = true;
+            statusImportar.textContent = "Lendo arquivo...";
+            try {
+                const texto = await arquivo.text();
+                const backup = JSON.parse(texto);
+                if (
+                    !backup ||
+                    backup.formato !== "gestor-tlgr-backup" ||
+                    !Array.isArray(backup.chats) ||
+                    !Array.isArray(backup.mensagens)
+                ) {
+                    statusImportar.textContent = "Arquivo invalido - nao parece ser um backup do Gestor TLGR.";
+                    return;
+                }
+
+                const db = await abrirBanco();
+                statusImportar.textContent = `Restaurando ${backup.chats.length} grupo(s)/canal(is)...`;
+                for (const chat of backup.chats) await salvarChat(db, chat);
+
+                let restauradas = 0;
+                for (const mensagem of backup.mensagens) {
+                    await salvarMensagem(db, mensagem);
+                    restauradas++;
+                    if (restauradas % 1000 === 0) {
+                        statusImportar.textContent = `Restaurando mensagens... ${restauradas} de ${backup.mensagens.length}`;
+                    }
+                }
+
+                statusImportar.textContent =
+                    `Restaurado: ${backup.chats.length} grupo(s)/canal(is), ${backup.mensagens.length} mensagem(ns)` +
+                    (backup.geradoEm ? ` (backup gerado em ${new Date(backup.geradoEm).toLocaleString()})` : "") +
+                    ".";
+            } catch (erro) {
+                statusImportar.textContent = "Erro ao importar: " + (erro && erro.message ? erro.message : erro);
+            } finally {
+                botaoImportar.disabled = false;
+            }
+        });
+    }
+
     // Acha o dialog.entity de um chat ja escaneado, pelo chatId guardado -
     // precisa disso (em vez de so o chatId numerico) pra poder chamar
     // cliente.getMessages, do mesmo jeito que escanearTudo usa
@@ -1402,11 +1587,24 @@
         // nao quer mais acompanhar nao devia continuar poluindo a lista de
         // status so porque foi escaneado um dia.
         const excluidos = carregarGruposExcluidos();
-        const chats = (await listarChats(db)).filter((c) => !excluidos.has(c.chatId));
+        const todosOsChatsSalvos = await listarChats(db);
+        const chats = todosOsChatsSalvos.filter((c) => !excluidos.has(c.chatId));
         chats.sort((a, b) => (a.chatTitle || "").localeCompare(b.chatTitle || ""));
+        // Quantos sumiram daqui por estarem desmarcados em "Configurar
+        // grupos" - antes a lista so encolhia silenciosamente, sem nenhuma
+        // pista de que havia mais chats escaneados alem dos visiveis aqui.
+        const quantidadeOculta = todosOsChatsSalvos.length - chats.length;
+        const notaOcultosHtml = quantidadeOculta
+            ? '<div style="color:#8b92a3;font-size:11px;margin-top:6px;">' +
+              (quantidadeOculta === 1
+                  ? "+1 grupo oculto (desmarcado em \"Configurar grupos\")"
+                  : "+" + quantidadeOculta + ' grupos ocultos (desmarcados em "Configurar grupos")') +
+              "</div>"
+            : "";
         if (!chats.length) {
             container.innerHTML =
-                '<div style="color:#8b92a3;">Nenhum grupo escaneado ainda (ou todos os escaneados estao desmarcados em "Configurar grupos").</div>';
+                '<div style="color:#8b92a3;">Nenhum grupo escaneado ainda (ou todos os escaneados estao desmarcados em "Configurar grupos").</div>' +
+                notaOcultosHtml;
             return;
         }
         const linhas = [];
@@ -1455,7 +1653,8 @@
             '<th style="padding:4px 6px;white-space:nowrap;">Ultimo scan</th>' +
             "</tr></thead><tbody>" +
             linhas.join("") +
-            "</tbody></table>";
+            "</tbody></table>" +
+            notaOcultosHtml;
     }
 
     async function telaScanner() {
@@ -1600,6 +1799,47 @@
         });
     }
 
+    // So mensagens.GetHistory/iterMessages (o que o scan chama em loop,
+    // muitas vezes seguidas, no mesmo chat) realisticamente batem num
+    // FLOOD_WAIT longo o suficiente pra chegar aqui - os outros lugares que
+    // usam ".seconds" nesse mesmo formato de erro (SLOWMODE_WAIT,
+    // TAKEOUT_INIT_DELAY, etc.) sao de fluxos que o scan nunca aciona.
+    //
+    // A propria lib (teleproto) ja espera sozinha por um FLOOD_WAIT de ate
+    // 60s (floodSleepThreshold padrao dela) antes de sequer devolver o erro
+    // pra gente - isso aqui so entra em acao quando a espera pedida pelo
+    // Telegram e MAIOR que isso e a lib desiste. Sem isso, um FLOOD_WAIT
+    // longo simplesmente quebrava o scan inteiro meio do caminho: parava,
+    // mostrava "Erro durante o scan: Please wait Xs..." e ficava por conta
+    // do usuario perceber e clicar "Iniciar scan" de novo manualmente (o
+    // checkpoint ja garantia que retomava do ponto certo, so que exigia
+    // esse passo manual).
+    //
+    // Deteccao por duck-typing (erro.seconds, numero) em vez de instanceof
+    // Api.errors.FloodWaitError: essa classe (teleproto/errors) nao e
+    // exposta pelo bridge (window.TeleprotoBridge so tem TelegramClient/
+    // StringSession/PromisedWebSockets/Api - ver entry.js) - passar a expor
+    // isso exigiria mexer no bundle, risco desproporcional pra esse ganho.
+    //
+    // Devolve true sempre que ERA um flood wait (espera completa ou nao -
+    // quem chama confere cancelarScanSolicitado separado pra saber qual dos
+    // dois aconteceu); false quando nao era flood wait nenhum, pra quem
+    // chamou relancar o erro exatamente como sempre relancou.
+    async function aguardarFloodWaitLongoSeForOCaso(erro) {
+        if (!erro || typeof erro.seconds !== "number" || erro.seconds <= 0) return false;
+        const segundosTotais = erro.seconds;
+        let restante = segundosTotais;
+        while (restante > 0 && !cancelarScanSolicitado) {
+            notificarStatusScan(
+                `O Telegram pediu uma pausa (flood wait) de ${segundosTotais}s - aguardando ${restante}s antes de continuar...`
+            );
+            const passo = Math.min(restante, 5);
+            await new Promise((resolve) => setTimeout(resolve, passo * 1000));
+            restante -= passo;
+        }
+        return true;
+    }
+
     // apenasChatId: null/"" escaneia todos os grupos/canais (como antes); um
     // chatId especifico faz so aquele grupo, sem depender da ordem que
     // iterDialogs() devolve.
@@ -1625,6 +1865,16 @@
     // lastScannedMessageId pra frente, pegando so mensagem nova. So comeca
     // se a fase 1 nao foi interrompida (senao o chat fica pra terminar o
     // backfill na proxima vez antes de seguir pra mensagem nova).
+    //
+    // Cada fase roda dentro de um laco de retry (while (true) { try {...}
+    // catch {...} }): se o for-await terminar sem erro, dá break e segue a
+    // vida; se der erro de flood wait longo (ver
+    // aguardarFloodWaitLongoSeForOCaso), espera e tenta nessa mesma fase de
+    // novo, sem perder o que ja foi salvo (textoCompletoAte/
+    // lastScannedMessageId ja avancaram em memoria a cada mensagem, entao a
+    // nova chamada de iterMessages com esses valores atualizados retoma do
+    // lugar certo, nunca reprocessa nada); qualquer outro erro continua
+    // propagando exatamente como sempre propagou.
     async function escanearTudo(apenasChatId) {
         if (scanEmAndamento) return;
         scanEmAndamento = true;
@@ -1635,14 +1885,32 @@
         // esteja desmarcado em "Configurar grupos do scan".
         const excluidos = apenasChatId ? null : carregarGruposExcluidos();
         try {
+            // Materializa a lista inteira ANTES de comecar a escanear
+            // qualquer chat (em vez de so consumir iterTodosOsDialogs() aos
+            // poucos, no meio do laco) - e o que permite mostrar "grupo X de
+            // Y" durante o scan (pedido do usuario). Mesmo custo de API de
+            // sempre (so pagina o GetDialogs inteiro de uma vez em vez de
+            // intercalado com o escaneamento de cada chat), nao faz nenhuma
+            // chamada extra por grupo.
+            const dialogsParaEscanear = [];
             for await (const dialog of iterTodosOsDialogs()) {
-                if (cancelarScanSolicitado) break;
                 if (!(dialog.isGroup || dialog.isChannel)) continue;
-
                 const chatId = String(dialog.id);
                 if (apenasChatId && chatId !== apenasChatId) continue;
                 if (excluidos && excluidos.has(chatId)) continue;
+                dialogsParaEscanear.push(dialog);
+            }
+            const totalDeGrupos = dialogsParaEscanear.length;
 
+            for (let indiceGrupo = 0; indiceGrupo < totalDeGrupos; indiceGrupo++) {
+                if (cancelarScanSolicitado) break;
+                const dialog = dialogsParaEscanear[indiceGrupo];
+                // So faz sentido com "Todos" (mais de um grupo na lista) -
+                // escaneando um grupo especifico (apenasChatId, lista
+                // sempre com 1 item so) "grupo 1 de 1" so seria ruido.
+                const prefixoGrupo = totalDeGrupos > 1 ? `(grupo ${indiceGrupo + 1} de ${totalDeGrupos}) ` : "";
+
+                const chatId = String(dialog.id);
                 const chatTitle = dialog.title || dialog.name || chatId;
                 const chatUsername = (dialog.entity && dialog.entity.username) || null;
 
@@ -1692,95 +1960,121 @@
                 if (textoCompletoAte < backfillAlvo) {
                     let totalVistas = 0;
                     notificarStatusScan(
-                        `${chatTitle}: completando historico antigo (mensagem ${textoCompletoAte} ate ${backfillAlvo})...`
+                        `${prefixoGrupo}${chatTitle}: completando historico antigo (mensagem ${textoCompletoAte} ate ${backfillAlvo})...`
                     );
-                    for await (const mensagem of cliente.iterMessages(dialog.entity, {
-                        minId: textoCompletoAte,
-                        maxId: backfillAlvo + 1,
-                        reverse: true,
-                    })) {
-                        if (cancelarScanSolicitado) {
-                            cancelado = true;
-                            break;
-                        }
-                        totalVistas++;
-                        textoCompletoAte = mensagem.id;
+                    while (true) {
+                        try {
+                            for await (const mensagem of cliente.iterMessages(dialog.entity, {
+                                minId: textoCompletoAte,
+                                maxId: backfillAlvo + 1,
+                                reverse: true,
+                            })) {
+                                if (cancelarScanSolicitado) {
+                                    cancelado = true;
+                                    break;
+                                }
+                                totalVistas++;
+                                textoCompletoAte = mensagem.id;
 
-                        const { reactions, total } = extrairReacoes(mensagem);
-                        await salvarMensagem(db, {
-                            key: chatId + ":" + mensagem.id,
-                            chatId,
-                            messageId: mensagem.id,
-                            dateUtc: dataIso(mensagem),
-                            texto: textoCompleto(mensagem),
-                            reactionTotal: total,
-                            reactions,
-                            chatTitle,
-                        });
+                                const { reactions, total } = extrairReacoes(mensagem);
+                                await salvarMensagem(db, {
+                                    key: chatId + ":" + mensagem.id,
+                                    chatId,
+                                    messageId: mensagem.id,
+                                    dateUtc: dataIso(mensagem),
+                                    texto: textoCompleto(mensagem),
+                                    reactionTotal: total,
+                                    reactions,
+                                    chatTitle,
+                                });
 
-                        if (totalVistas % 500 === 0) {
-                            const segundos = Math.round((Date.now() - inicio) / 1000);
-                            notificarStatusScan(
-                                `${chatTitle}: completando historico antigo, ${totalVistas} mensagens (${segundos}s)...`
-                            );
-                            await salvarCheckpoint(false);
+                                if (totalVistas % 500 === 0) {
+                                    const segundos = Math.round((Date.now() - inicio) / 1000);
+                                    notificarStatusScan(
+                                        `${prefixoGrupo}${chatTitle}: completando historico antigo, ${totalVistas} mensagens (${segundos}s)...`
+                                    );
+                                    await salvarCheckpoint(false);
+                                }
+                            }
+                            break; // for-await terminou sem erro (cancelado ja foi tratado acima)
+                        } catch (erro) {
+                            if (!(await aguardarFloodWaitLongoSeForOCaso(erro))) throw erro;
+                            if (cancelarScanSolicitado) {
+                                cancelado = true;
+                                break; // usuario cancelou enquanto esperava o flood wait passar
+                            }
+                            // espera terminou sem cancelar - volta pro topo
+                            // do while e refaz iterMessages a partir de
+                            // textoCompletoAte atualizado, sem reprocessar
+                            // nada que ja foi salvo
                         }
                     }
                     await salvarCheckpoint(false);
                 }
 
-                if (cancelado) {
-                    if (apenasChatId) break;
-                    continue; // backfill ficou parcial - termina na proxima vez antes de seguir pra mensagem nova
-                }
+                if (cancelado) continue; // backfill ficou parcial - termina na proxima vez antes de seguir pra mensagem nova
 
                 // ---- Fase 2: scan incremental normal (so mensagem nova) ----
-                notificarStatusScan(`Escaneando: ${chatTitle} (a partir da mensagem ${lastScannedMessageId})...`);
+                notificarStatusScan(`${prefixoGrupo}Escaneando: ${chatTitle} (a partir da mensagem ${lastScannedMessageId})...`);
                 let totalVistas = 0;
                 let comReacao = 0;
                 let terminouSemCancelar = true;
 
-                for await (const mensagem of cliente.iterMessages(dialog.entity, {
-                    minId: lastScannedMessageId,
-                    reverse: true,
-                })) {
-                    if (cancelarScanSolicitado) {
-                        terminouSemCancelar = false;
-                        break;
-                    }
-                    totalVistas++;
-                    lastScannedMessageId = Math.max(lastScannedMessageId, mensagem.id);
+                while (true) {
+                    try {
+                        for await (const mensagem of cliente.iterMessages(dialog.entity, {
+                            minId: lastScannedMessageId,
+                            reverse: true,
+                        })) {
+                            if (cancelarScanSolicitado) {
+                                terminouSemCancelar = false;
+                                break;
+                            }
+                            totalVistas++;
+                            lastScannedMessageId = Math.max(lastScannedMessageId, mensagem.id);
 
-                    const { reactions, total } = extrairReacoes(mensagem);
-                    // Salva toda mensagem, nao so as com reacao - o texto
-                    // completo de tudo e o que permite a busca por palavra-
-                    // chave (tela "Buscar mensagens"). reactionTotal fica 0
-                    // quando nao tem reacao, e o ranking de "top reacoes"
-                    // continua filtrando por ele normalmente.
-                    await salvarMensagem(db, {
-                        key: chatId + ":" + mensagem.id,
-                        chatId,
-                        messageId: mensagem.id,
-                        dateUtc: dataIso(mensagem),
-                        texto: textoCompleto(mensagem),
-                        reactionTotal: total,
-                        reactions,
-                        chatTitle,
-                    });
-                    if (total > 0) comReacao++;
+                            const { reactions, total } = extrairReacoes(mensagem);
+                            // Salva toda mensagem, nao so as com reacao - o
+                            // texto completo de tudo e o que permite a busca
+                            // por palavra-chave (tela "Buscar mensagens").
+                            // reactionTotal fica 0 quando nao tem reacao, e
+                            // o ranking de "top reacoes" continua filtrando
+                            // por ele normalmente.
+                            await salvarMensagem(db, {
+                                key: chatId + ":" + mensagem.id,
+                                chatId,
+                                messageId: mensagem.id,
+                                dateUtc: dataIso(mensagem),
+                                texto: textoCompleto(mensagem),
+                                reactionTotal: total,
+                                reactions,
+                                chatTitle,
+                            });
+                            if (total > 0) comReacao++;
 
-                    if (totalVistas % 500 === 0) {
-                        const segundos = Math.round((Date.now() - inicio) / 1000);
-                        notificarStatusScan(
-                            `${chatTitle}: ${totalVistas} mensagens verificadas (${segundos}s), ${comReacao} com reacao...`
-                        );
-                        await salvarCheckpoint(false);
+                            if (totalVistas % 500 === 0) {
+                                const segundos = Math.round((Date.now() - inicio) / 1000);
+                                notificarStatusScan(
+                                    `${prefixoGrupo}${chatTitle}: ${totalVistas} mensagens verificadas (${segundos}s), ${comReacao} com reacao...`
+                                );
+                                await salvarCheckpoint(false);
+                            }
+                        }
+                        break; // for-await terminou sem erro (cancelado ja foi tratado acima)
+                    } catch (erro) {
+                        if (!(await aguardarFloodWaitLongoSeForOCaso(erro))) throw erro;
+                        if (cancelarScanSolicitado) {
+                            terminouSemCancelar = false;
+                            break; // usuario cancelou enquanto esperava o flood wait passar
+                        }
+                        // espera terminou sem cancelar - volta pro topo do
+                        // while e refaz iterMessages a partir de
+                        // lastScannedMessageId atualizado, sem reprocessar
+                        // nada que ja foi salvo
                     }
                 }
 
                 await salvarCheckpoint(terminouSemCancelar);
-
-                if (apenasChatId) break; // so o grupo escolhido, nao segue pros outros
             }
         } finally {
             scanEmAndamento = false;
